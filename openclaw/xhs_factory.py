@@ -174,10 +174,26 @@ def recreate_content(original_text: str, gene_sop: Any, style: str = "sharp") ->
         except (TypeError, ValueError):
             omax = 4000
         omax = max(500, min(12000, omax))
-        user_p = json.dumps(
-            {"original": orig[:omax], "gene_sop": g, "style": st},
-            ensure_ascii=False,
-        )
+        user_tpl = str(pack.get("user_template") or "").strip()
+        gene_json = json.dumps(g, ensure_ascii=False)
+        if user_tpl:
+            try:
+                user_p = prompt_store.substitute_user_template(
+                    user_tpl,
+                    original=orig[:omax],
+                    style=st,
+                    gene_json=gene_json,
+                )
+            except (KeyError, ValueError):
+                user_p = json.dumps(
+                    {"original": orig[:omax], "gene_sop": g, "style": st},
+                    ensure_ascii=False,
+                )
+        else:
+            user_p = json.dumps(
+                {"original": orig[:omax], "gene_sop": g, "style": st},
+                ensure_ascii=False,
+            )
         parsed = minimax_client.MiniMaxClient().complete_json(sys_p, user_p)
         if parsed:
             tt = str(parsed.get("title") or "").strip()

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import random
@@ -480,6 +481,7 @@ def _run_prepare_xhs_post(params: dict[str, Any]) -> dict[str, Any]:
     """
     pack = prompt_store.load_xhs_prompt("prepare_xhs_post")
     topic = str(params.get("topic", "流量主题")).strip()[:100]
+    topic_16 = topic[:16] if topic else "流量"
     tone = str(params.get("tone", "steady")).strip()[:24]
     vid = str(params.get("variant_id", "v1.0")).strip()[:80]
     kw = _boost_keyword()
@@ -492,20 +494,40 @@ def _run_prepare_xhs_post(params: dict[str, Any]) -> dict[str, Any]:
     hs = pack.get("headline_when_short") if isinstance(pack.get("headline_when_short"), dict) else {}
     tpl_a = str(hs.get("template_a") or "{topic}·{tone}视角")
     tpl_b = str(hs.get("template_b") or "{kw}·{topic}")
+    fmt_kw = {"topic": topic, "tone": tone, "kw": kw, "topic_40": topic[:40], "topic_16": topic_16}
     if not headline:
-        headline = tpl_a.format(topic=topic, tone=tone, kw=kw)[:80]
-        if len(headline.strip()) < 6:
-            headline = tpl_b.format(topic=topic, tone=tone, kw=kw)[:80]
+        hook_contrast = str(hs.get("hook_contrast") or "").strip()
+        hook_number = str(hs.get("hook_number") or "").strip()
+        hook_warn = str(hs.get("hook_warn") or "").strip()
+        hooks = [h for h in (hook_contrast, hook_number, hook_warn) if h]
+        picked = ""
+        if hooks:
+            idx = int(hashlib.md5(topic.encode("utf-8", errors="replace")).hexdigest(), 16) % len(hooks)
+            try:
+                picked = hooks[idx].format(**fmt_kw).strip()[:80]
+            except (KeyError, ValueError):
+                picked = ""
+        if len(picked) >= 6:
+            headline = picked
+        else:
+            headline = tpl_a.format(**fmt_kw)[:80]
+            if len(headline.strip()) < 6:
+                headline = tpl_b.format(**fmt_kw)[:80]
     body = pb[:2000] if len(pb) >= _min_body_raw else ""
     if not body:
         body_tpl = str(pack.get("body_when_short") or "").strip()
         if body_tpl:
-            body = body_tpl.format(tone=tone, topic_40=topic[:40], kw=kw)[:2000]
+            try:
+                body = body_tpl.format(**fmt_kw)[:2000]
+            except (KeyError, ValueError):
+                body = (
+                    f"最近老刷到「{topic_16}」相关的内容，我也踩过坑。\n"
+                    f"把我自己的判断标准摊开来（无广，纯经历）。你卡在哪一步？{kw} 相关我看到就回～"
+                )[:2000]
         else:
             body = (
-                f"（{tone}）关于「{topic[:40]}」：开头共鸣 + 3 条可执行要点 + 结尾互动。\n"
-                f"首段请自然带上爆词「{kw}」（可用同义表达）。\n"
-                "文末可加 1–2 个表情符号。"
+                f"最近老刷到「{topic_16}」相关的内容，我也踩过坑。\n"
+                f"把我自己的判断标准摊开来（无广，纯经历）。你卡在哪一步？{kw} 相关我看到就回～"
             )[:2000]
     raw_tags = params.get("hashtags")
     if isinstance(raw_tags, list) and len(raw_tags) >= 3:

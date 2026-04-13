@@ -66,11 +66,15 @@ def _default_case_library() -> list[dict[str, Any]]:
 
 def _norm_gene(gene_sop: Any) -> dict[str, Any]:
     if isinstance(gene_sop, dict):
-        return {
+        out = {
             "viral_sop": str(gene_sop.get("viral_sop") or "对照式")[:32],
             "core_hook": str(gene_sop.get("core_hook") or "")[:200],
             "target_emotion": str(gene_sop.get("target_emotion") or "共鸣")[:32],
         }
+        formulas = gene_sop.get("formulas")
+        if isinstance(formulas, list) and formulas:
+            out["formulas"] = formulas[:5]
+        return out
     if isinstance(gene_sop, str) and gene_sop.strip():
         try:
             obj = json.loads(gene_sop)
@@ -127,15 +131,42 @@ def extract_viral_patterns(topic: str, sample_size: int = 12) -> dict[str, Any]:
         )
         parsed = minimax_client.MiniMaxClient().complete_json(sys_p, user_p)
         if parsed:
-            vs = str(parsed.get("viral_sop") or "").strip()
-            ch = str(parsed.get("core_hook") or "").strip()
-            te = str(parsed.get("target_emotion") or "").strip()
+            formulas = parsed.get("formulas")
+            if isinstance(formulas, list) and formulas:
+                out["formulas"] = formulas[:3]
+                f0 = formulas[0] if isinstance(formulas[0], dict) else {}
+                if isinstance(f0, dict):
+                    hl = str(f0.get("hook_logic") or "").strip()
+                    ss = str(f0.get("structure_sop") or "").strip()
+                    et = str(f0.get("emotional_trigger") or "").strip()
+                    pid = str(f0.get("pattern_id") or "").strip()
+                    if len(str(parsed.get("viral_sop") or "").strip()) < 2:
+                        vs_fb = (ss[:32] or pid[:32] or "对照式").strip()
+                        out["viral_sop"] = (vs_fb if len(vs_fb) >= 2 else "对照式")[:32]
+                    if len(str(parsed.get("core_hook") or "").strip()) < 4:
+                        merged = "；".join(x for x in (hl, ss) if x).strip()
+                        if len(merged) >= 4:
+                            out["core_hook"] = merged[:200]
+                    if len(str(parsed.get("target_emotion") or "").strip()) < 2:
+                        out["target_emotion"] = (et[:32] if et else "共鸣")[:32]
+            vs = str(parsed.get("viral_sop") or out.get("viral_sop") or "").strip()
+            ch = str(parsed.get("core_hook") or out.get("core_hook") or "").strip()
+            te = str(parsed.get("target_emotion") or out.get("target_emotion") or "").strip()
             if len(vs) >= 2:
                 out["viral_sop"] = vs[:32]
             if len(ch) >= 4:
                 out["core_hook"] = ch[:200]
             if len(te) >= 2:
                 out["target_emotion"] = te[:32]
+            if len(str(out.get("core_hook") or "").strip()) < 4:
+                out["core_hook"] = (
+                    f"用「{out.get('viral_sop') or '对照式'}」承接「{out.get('target_emotion') or '共鸣'}」，"
+                    f"前3秒抛出与「{t[:20] or '主题'}」强相关的反差信息"
+                )[:200]
+            if len(str(out.get("viral_sop") or "").strip()) < 2:
+                out["viral_sop"] = "对照式"
+            if len(str(out.get("target_emotion") or "").strip()) < 2:
+                out["target_emotion"] = "共鸣"
             out["notes"] = "minimax extract_viral_patterns (+ mock sample stats)"
         else:
             out["notes"] = (out["notes"] or "") + " | minimax: no parseable json"
@@ -257,25 +288,51 @@ def predict_viral_score(
             lib_n = 20
         tmax = max(500, min(32000, tmax))
         lib_n = max(1, min(50, lib_n))
-        user_p = json.dumps(
-            {
-                "recreated_text": text[:tmax],
-                "gene_sop": g,
-                "case_library": lib[:lib_n],
-            },
-            ensure_ascii=False,
-        )
+        user_tpl = str(pack.get("user_template") or "").strip()
+        gene_json = json.dumps(g, ensure_ascii=False)
+        case_blob = json.dumps(lib[:lib_n], ensure_ascii=False)[:12000]
+        if user_tpl:
+            try:
+                user_p = prompt_store.substitute_user_template(
+                    user_tpl,
+                    recreated_blob=text[:tmax],
+                    gene_json=gene_json,
+                    case_blob=case_blob,
+                )
+            except (KeyError, ValueError):
+                user_p = json.dumps(
+                    {
+                        "recreated_text": text[:tmax],
+                        "gene_sop": g,
+                        "case_library": lib[:lib_n],
+                    },
+                    ensure_ascii=False,
+                )
+        else:
+            user_p = json.dumps(
+                {
+                    "recreated_text": text[:tmax],
+                    "gene_sop": g,
+                    "case_library": lib[:lib_n],
+                },
+                ensure_ascii=False,
+            )
         parsed = minimax_client.MiniMaxClient().complete_json(sys_p, user_p)
         if parsed:
             try:
                 ps = float(parsed.get("predicted_score"))
                 cf = float(parsed.get("confidence"))
-                rf = str(parsed.get("risk_factor") or risk)
+                if ps > 1.0:
+                    ps = min(1.0, ps / 100.0)
+                ar = str(parsed.get("audit_reason") or "").strip()
+                rf0 = str(parsed.get("risk_factor") or risk).strip()
+                rf = f"{ar} | {rf0}" if ar else rf0
+                rf = rf[:240]
                 if 0.0 <= ps <= 1.0 and 0.0 <= cf <= 1.0:
                     return {
                         "predicted_score": round(ps, 4),
                         "confidence": round(cf, 4),
-                        "risk_factor": rf[:120],
+                        "risk_factor": rf,
                         "reference_mean": round(ref_mean, 4),
                         "case_library_size": len(lib),
                         "notes": "minimax predict_viral_score",

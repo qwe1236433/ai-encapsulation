@@ -66,15 +66,18 @@ def xhs_pipeline_followup(
     if a == "extract_viral_patterns":
         gene = ctx.get("extract_viral_patterns") or {}
         orig = str(p0.get("source_text") or goal or "").strip()[:5000]
+        gene_pack = {
+            "viral_sop": gene.get("viral_sop"),
+            "core_hook": gene.get("core_hook"),
+            "target_emotion": gene.get("target_emotion"),
+        }
+        if isinstance(gene.get("formulas"), list) and gene["formulas"]:
+            gene_pack["formulas"] = gene["formulas"]
         return {
             "action": "recreate_content",
             "params": {
                 "original_text": orig,
-                "gene_sop": {
-                    "viral_sop": gene.get("viral_sop"),
-                    "core_hook": gene.get("core_hook"),
-                    "target_emotion": gene.get("target_emotion"),
-                },
+                "gene_sop": gene_pack,
                 "style": str(p0.get("tone") or "sharp"),
                 "variant_id": vid,
             },
@@ -87,15 +90,18 @@ def xhs_pipeline_followup(
         title = str(rt.get("title") or "")
         body = str(rt.get("body") or "")
         text = f"{title}\n{body}".strip()
+        gene_pack = {
+            "viral_sop": gene.get("viral_sop"),
+            "core_hook": gene.get("core_hook"),
+            "target_emotion": gene.get("target_emotion"),
+        }
+        if isinstance(gene.get("formulas"), list) and gene["formulas"]:
+            gene_pack["formulas"] = gene["formulas"]
         return {
             "action": "predict_viral_score",
             "params": {
                 "recreated_text": text,
-                "gene_sop": {
-                    "viral_sop": gene.get("viral_sop"),
-                    "core_hook": gene.get("core_hook"),
-                    "target_emotion": gene.get("target_emotion"),
-                },
+                "gene_sop": gene_pack,
                 "case_library": [],
                 "variant_id": vid,
             },

@@ -1,14 +1,27 @@
-# 小红书工厂 — extract_viral_patterns（MiniMax system + user 模板）
-# user模板用 $topic / $sample_count / $samples_blob（string.Template），避免 JSON 中含 { } 破坏格式化
-version: 1
+# 小红书工厂 — extract_viral_patterns（操盘手：流量公式 + 下游兼容字段）
+# user：$topic / $sample_count / $samples_blob（string.Template）
+version: 2
 
-system: >-
-  你是小红书爆款结构分析师。只输出一个 JSON 对象，不要 markdown。
-  键：viral_sop（string，如对照式/递进式）、core_hook（string，一句爆款钩子逻辑）、
-  target_emotion（string，如共鸣/好奇）。须与给定样本统计倾向一致。
-  core_hook 必须是「给二创用的钩子意图」，不要写成写作教程（禁止出现「开头要写」「三条要点」类句式）。
+system: |
+  你是顶级短视频/图文流量解析专家，从样本中逆向「可复制的流量公式」，供后续二创严格执行（不是写摘要）。
+  只输出一个 JSON 对象，不要 markdown，不要注释。
+
+  分析时必须显式覆盖四块（可写在 formulas 各条里，禁止空泛形容词如「很有吸引力」「具有启发性」）：
+  1. 钩子逻辑 Hook：标题/开篇触发哪种心理机制（反差、焦虑、贪婪、好奇、避坑等），用可执行语句描述。
+  2. 情绪曲线 Emotion：读者阅读后的心理路径（如「放松→警觉→想收藏」），要具体到阶段。
+  3. 信息密度 Density：数字、对比轴、事实支撑应如何铺排（写清「至少几处数字 / 几处对比」）。
+  4. 转化路径 CTA：如何低门槛引导互动（评论/收藏/关注），写清放在段末还是句首。
+
+  顶层字段（缺一不可）：
+  - formulas: 数组，1～3 条。每条必须含：
+    pattern_id（string，如 f1）、hook_logic（string）、structure_sop（string，可执行的段落结构指令）、
+    emotional_trigger（string）、key_elements（字符串数组，如「数字」「对比」「具体场景」）。
+  - viral_sop: string，2～32 字，对主推公式的高度概括（如「对照避坑」「清单测评」），禁止空话。
+  - core_hook: string，至少 20 字，整合主推钩子等，必须能直接指导二创正文；禁止「开头要写三点」类教案句。
+  - target_emotion: string，如「好奇」「焦虑缓解」「爽感」，2～16 字。
 
 user_template: |-
-  话题：$topic
-  有效样本数：$sample_count
-  样本摘要：$samples_blob
+  请基于以下关于「$topic」的爆款样本（有效 $sample_count 条），提取可复制的流量公式 JSON（字段见 system）。
+
+  样本数据：
+  $samples_blob

@@ -1,0 +1,3 @@
+# OpenClaw 执行面配置（占位，可按项目替换）
+service: openclaw
+log_level: info

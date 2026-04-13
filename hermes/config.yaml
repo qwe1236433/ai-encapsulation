@@ -1,0 +1,3 @@
+# Hermes 控制面配置（占位，可按项目替换）
+service: hermes
+log_level: info

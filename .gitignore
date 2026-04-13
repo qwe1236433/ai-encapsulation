@@ -1,0 +1,34 @@
+# 密钥与本地覆盖（保留 .env.example 作模板）
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+pip-wheel-metadata/
+
+# 运行时会话与绑定数据（勿提交个人笔记/任务）
+hermes/sessions/
+openclaw/data/
+
+# 工具 / IDE
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# 批跑输出（可选本地留存）
+bench-last-run.json
+reports/
+
+# 本地 smoke / 同步脚本生成的任务快照
+*-last-task.json
+last-task-sync.json

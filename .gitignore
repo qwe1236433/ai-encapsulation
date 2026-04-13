@@ -29,6 +29,9 @@ Thumbs.db
 bench-last-run.json
 reports/
 
+# 自动 push 日志（勿提交）
+.local/
+
 # 本地 smoke / 同步脚本生成的任务快照
 *-last-task.json
 last-task-sync.json

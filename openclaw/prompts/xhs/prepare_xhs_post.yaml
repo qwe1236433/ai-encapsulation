@@ -1,0 +1,27 @@
+# 小红书工厂 — prepare_xhs_post（本地模板，非 MiniMax；占位符用 {name}，由代码 str.format 填充）
+version: 1
+
+headline_when_short:
+  template_a: "{topic}·{tone}视角"
+  template_b: "{kw}·{topic}"
+
+body_when_short: |-
+  （{tone}）关于「{topic_40}」：开头共鸣 + 3 条可执行要点 + 结尾互动。
+  首段请自然带上爆词「{kw}」（可用同义表达）。
+  文末可加 1–2 个表情符号。
+
+image_prompt: "小红书竖版封面 1080x1440，主标题「{headline_24}」，风格偏{tone}，留白清晰、对比强。"
+
+hashtags_fallback:
+  topic_slice: 10
+  topic_empty_fallback: "复盘"
+  static_middle: "干货分享"
+  tone_slice: 8
+  tone_empty_fallback: "成长"
+
+post_checklist:
+  boost_where: "标题或正文前 80 字"
+  emoji_note: "正文或标题旁至少 1 个相关 emoji"
+  cta_note: "结尾引导评论/收藏/关注其一"
+
+notes: "Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id."

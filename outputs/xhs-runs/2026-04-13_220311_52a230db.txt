@@ -1,0 +1,37 @@
+﻿========== XHS factory export ==========
+时间: 2026-04-13 22:03:11
+任务ID(task_id): 52a230db-f9c2-413c-ba0d-e600d43a1ab5
+目标(goal): XHS note: side hustle review, viral title and body structure
+final_status: paused_manual
+lifecycle_phase: awaiting_manual_publish
+查询完整JSON: GET http://127.0.0.1:8080/task/52a230db-f9c2-413c-ba0d-e600d43a1ab5
+
+【标题 headline】
+月入过万是真的吗？我把热门副业全测了一遍...
+
+【正文 body】
+现在的副业广告满天飞
+“月入过万”“轻松变现”
+但真相到底是怎样的？
+
+我决定亲自测
+测了写作变现、电商带货、短视频等7种热门副业
+记录：投入时间 / 实际收益 / 真实难度
+
+结果...
+和我想象的不一样
+
+全程无滤镜
+想知道哪种副业真的值得做吗？
+
+【话题标签 hashtags】
+#副业 #副业测评 #赚钱真相 #避坑指南
+
+【配图描述 image_prompt】
+小红书竖版封面 1080x1440，主标题「月入过万是真的吗？我把热门副业全测了一遍...」，风格偏minimal，留白清晰、对比强。
+
+【备注 notes】
+Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id.
+
+========== end ==========
+

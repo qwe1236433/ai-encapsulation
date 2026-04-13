@@ -9,7 +9,8 @@ RUN apt-get update \
 RUN python3 -m pip install --upgrade pip \
     && python3 -m pip install --no-cache-dir --break-system-packages fastapi uvicorn pyyaml
 
-COPY main.py .
+COPY main.py minimax_client.py xhs_factory.py prompt_store.py .
+COPY prompts ./prompts
 
 EXPOSE 3000
 

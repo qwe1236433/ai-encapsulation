@@ -1,0 +1,27 @@
+﻿========== XHS factory export ==========
+时间: 2026-04-13 21:50:27
+任务ID(task_id): 2110c998-53b1-43f7-b2fd-bbc3ce883599
+目标(goal): XHS note: side hustle review, viral title and body structure
+final_status: paused_manual
+lifecycle_phase: awaiting_manual_publish
+查询完整JSON: GET http://127.0.0.1:8080/task/2110c998-53b1-43f7-b2fd-bbc3ce883599
+
+【标题 headline】
+XHS note: side hustle review, viral title and body structure·steady视角
+
+【正文 body】
+（steady）关于「XHS note: side hustle review, viral titl」：开头共鸣 + 3 条可执行要点 + 结尾互动。
+首段请自然带上爆词「救命」（可用同义表达）。
+文末可加 1–2 个表情符号。
+
+【话题标签 hashtags】
+#XHS note: #干货分享 #steady
+
+【配图描述 image_prompt】
+小红书竖版封面 1080x1440，主标题「XHS note: side hustle re」，风格偏steady，留白清晰、对比强。
+
+【备注 notes】
+Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id.
+
+========== end ==========
+

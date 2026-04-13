@@ -232,11 +232,18 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/")
     def root():
+        llm_on = (os.environ.get("HERMES_LLM_ENABLED") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
         return {
             "service": "hermes",
             "mode": "traffic_lab_tavc",
             "architecture": "Traffic-Lab v1: Hermes(strategic) + OpenClaw(tactical)",
             "openclaw_url": os.environ.get("OPENCLAW_URL", ""),
+            "llm_think_enabled": llm_on,
             "sessions_dir": storage.sessions_dir(),
             "modules": [
                 "brain",

@@ -11,6 +11,10 @@ from typing import Any, Callable
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
+import minimax_client
+import prompt_store
+import xhs_factory
+
 app = FastAPI(title="OpenClaw", version="0.1.0")
 
 _LINK_TIMEOUT_SEC = 5.0
@@ -148,6 +152,13 @@ def _simulate_noise_rate() -> float:
         return 0.25
 
 
+def _env_flag(name: str, default_on: bool = True) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default_on
+    return raw not in ("0", "false", "no", "off")
+
+
 def _run_analyze_trends(params: dict[str, Any]) -> dict[str, Any]:
     """Mock：多序列/话题趋势摘要。"""
     symbol = str(params.get("symbol", "FLOW_MAIN"))
@@ -174,16 +185,34 @@ def _run_analyze_trends(params: dict[str, Any]) -> dict[str, Any]:
 def _run_generate_headline(params: dict[str, Any]) -> dict[str, Any]:
     """
     原子算子：只产出一条标题 +流量模拟预览。
-    仅当 boost=True 或 topic 已含 boost 词时，标题里才会出现该词。
+    配置 MINIMAX_API_KEY 且 OPENCLAW_MINIMAX_HEADLINE 开启时走 MiniMax；否则 Mock。
     """
     topic = str(params.get("topic", "流量复盘")).strip()[:80]
     tone = str(params.get("tone", "sharp")).strip()[:20]
     boost = bool(params.get("boost", False)) or (_boost_keyword() in topic)
     kw = _boost_keyword()
-    if boost:
-        headline = f"{kw}！{topic} · {tone}钩子"
-    else:
-        headline = f"{topic} · {tone}速览"
+    notes = "mock generate_headline"
+    headline = ""
+    if minimax_client.minimax_configured() and _env_flag("OPENCLAW_MINIMAX_HEADLINE", True):
+        sys_p = (
+            "你是顶级小红书流量操盘手。只输出一个 JSON 对象，禁止 markdown 代码块。"
+            ' 键：headline（string，不超过36字）、reason（string，一句说明钩子逻辑）。'
+        )
+        user_p = f"话题：{topic}。语气风格：{tone}。"
+        if boost:
+            user_p += f" 标题里必须自然出现爆词「{kw}」（可用合理变体，勿生硬堆砌）。"
+        else:
+            user_p += f" 不要使用爆词「{kw}」及其明显变体。"
+        user_p += " 标题要让人想点开、带情绪但不过分标题党。"
+        parsed = minimax_client.MiniMaxClient().complete_json(sys_p, user_p)
+        if parsed and str(parsed.get("headline") or "").strip():
+            headline = str(parsed["headline"]).strip()[:80]
+            notes = "minimax generate_headline"
+    if not headline:
+        if boost:
+            headline = f"{kw}！{topic} · {tone}钩子"
+        else:
+            headline = f"{topic} · {tone}速览"
     eng = mock_engagement_bundle(headline)
     return {
         "topic": topic,
@@ -191,7 +220,7 @@ def _run_generate_headline(params: dict[str, Any]) -> dict[str, Any]:
         "boost_applied": boost,
         "headline": headline,
         "engagement_preview": eng,
-        "notes": "mock generate_headline",
+        "notes": notes,
     }
 
 
@@ -249,16 +278,37 @@ def _run_competitor_audit(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_gen_body(params: dict[str, Any]) -> dict[str, Any]:
-    """生产：正文（风格由 params 传入，不在此写死具体行业文案）。"""
+    """生产：正文。MiniMax 开启时由模型二创；否则 Mock。"""
     headline = str(params.get("headline", "")).strip()[:200]
     tone = str(params.get("tone", "steady")).strip()[:20]
     hints = params.get("style_hints") if isinstance(params.get("style_hints"), dict) else {}
     pace = str(hints.get("pace", "中速"))[:12]
     lead = str(hints.get("lead", "共情开场"))[:20]
-    body = (
-        f"（{tone}/{pace}/{lead}）承接「{headline[:48] or '主题'}」：先点出痛点，再给一条可执行小结，末句引导互动。"
-    )[:800]
-    return {"tone": tone, "style_hints": hints, "body": body, "notes": "mock gen_body"}
+    notes = "mock gen_body"
+    body = ""
+    if minimax_client.minimax_configured() and _env_flag("OPENCLAW_MINIMAX_BODY", True):
+        sys_p = (
+            "你是小红书正文写手。只输出一个 JSON 对象，禁止 markdown。"
+            ' 键：body（string，180–480字为宜，分段用\\n）、cta（string，一句结尾互动）。'
+        )
+        user_p = json.dumps(
+            {"headline": headline, "tone": tone, "pace": pace, "lead": lead, "style_hints": hints},
+            ensure_ascii=False,
+        )
+        user_p += " 要求：情绪价值高、口语自然、可执行要点清晰，符合小红书阅读习惯。"
+        parsed = minimax_client.MiniMaxClient().complete_json(sys_p, user_p)
+        if parsed:
+            main = str(parsed.get("body") or "").strip()
+            cta = str(parsed.get("cta") or "").strip()
+            body = (main + ("\n\n" + cta if cta else "")).strip()[:2000]
+            if len(body) >= 8:
+                notes = "minimax gen_body"
+    if len(body) < 8:
+        body = (
+            f"（{tone}/{pace}/{lead}）承接「{headline[:48] or '主题'}」：先点出痛点，再给一条可执行小结，末句引导互动。"
+        )[:800]
+        notes = "mock gen_body"
+    return {"tone": tone, "style_hints": hints, "body": body, "notes": notes}
 
 
 def _run_tuning_params(params: dict[str, Any]) -> dict[str, Any]:
@@ -425,30 +475,82 @@ def parse_engagement_count(raw: Any) -> int:
 def _run_prepare_xhs_post(params: dict[str, Any]) -> dict[str, Any]:
     """
     生产算子：发布清单（手动发帖）。experiment_variant_id = Hermes 的 variant_id，发布后 real_note_id 与之绑定，无 manifest_id。
+    若 params 含 headline/body/hashtags（来自 xhs_factory 流水线），则优先采用。
+    模板文案见 prompts/xhs/prepare_xhs_post.yaml。
     """
+    pack = prompt_store.load_xhs_prompt("prepare_xhs_post")
     topic = str(params.get("topic", "流量主题")).strip()[:100]
     tone = str(params.get("tone", "steady")).strip()[:24]
     vid = str(params.get("variant_id", "v1.0")).strip()[:80]
     kw = _boost_keyword()
-    headline = f"{topic}·{tone}视角"[:80]
-    if len(headline.strip()) < 6:
-        headline = f"{kw}·{topic}"[:80]
-    body = (
-        f"（{tone}）关于「{topic[:40]}」：开头共鸣 + 3 条可执行要点 + 结尾互动。\n"
-        f"首段请自然带上爆词「{kw}」（可用同义表达）。\n"
-        "文末可加 1–2 个表情符号。"
-    )[:2000]
-    hashtags = [topic[:10] or "复盘", "干货分享", tone[:8] or "成长"]
-    image_prompt = (
-        f"小红书竖版封面 1080x1440，主标题「{headline[:24]}」，风格偏{tone}，留白清晰、对比强。"
+    ph = str(params.get("headline", "")).strip()
+    pb = str(params.get("body", "")).strip()
+    # 与 Hermes recreate 校验同向：过短不要用英文 topic 兜底盖住模型输出（曾出现2～3 字标题 + 8～19 字正文触发模板）
+    _min_hl = 2
+    _min_body_raw = 8
+    headline = ph[:80] if len(ph) >= _min_hl else ""
+    hs = pack.get("headline_when_short") if isinstance(pack.get("headline_when_short"), dict) else {}
+    tpl_a = str(hs.get("template_a") or "{topic}·{tone}视角")
+    tpl_b = str(hs.get("template_b") or "{kw}·{topic}")
+    if not headline:
+        headline = tpl_a.format(topic=topic, tone=tone, kw=kw)[:80]
+        if len(headline.strip()) < 6:
+            headline = tpl_b.format(topic=topic, tone=tone, kw=kw)[:80]
+    body = pb[:2000] if len(pb) >= _min_body_raw else ""
+    if not body:
+        body_tpl = str(pack.get("body_when_short") or "").strip()
+        if body_tpl:
+            body = body_tpl.format(tone=tone, topic_40=topic[:40], kw=kw)[:2000]
+        else:
+            body = (
+                f"（{tone}）关于「{topic[:40]}」：开头共鸣 + 3 条可执行要点 + 结尾互动。\n"
+                f"首段请自然带上爆词「{kw}」（可用同义表达）。\n"
+                "文末可加 1–2 个表情符号。"
+            )[:2000]
+    raw_tags = params.get("hashtags")
+    if isinstance(raw_tags, list) and len(raw_tags) >= 3:
+        hashtags = [str(x).strip()[:24] for x in raw_tags[:12] if str(x).strip()]
+    else:
+        hf = pack.get("hashtags_fallback") if isinstance(pack.get("hashtags_fallback"), dict) else {}
+        try:
+            ts = int(hf.get("topic_slice", 10))
+        except (TypeError, ValueError):
+            ts = 10
+        try:
+            tone_slice = int(hf.get("tone_slice", 8))
+        except (TypeError, ValueError):
+            tone_slice = 8
+        topic_fb = str(hf.get("topic_empty_fallback", "复盘"))
+        tone_fb = str(hf.get("tone_empty_fallback", "成长"))
+        mid = str(hf.get("static_middle", "干货分享"))
+        tshort = topic[:ts] if topic[:ts] else topic_fb
+        ttag = tone[:tone_slice] if tone[:tone_slice] else tone_fb
+        hashtags = [tshort, mid, ttag]
+    ip_tpl = str(pack.get("image_prompt") or "").strip()
+    if ip_tpl:
+        image_prompt = ip_tpl.format(headline_24=headline[:24], tone=tone, topic=topic, kw=kw)
+    else:
+        image_prompt = (
+            f"小红书竖版封面 1080x1440，主标题「{headline[:24]}」，风格偏{tone}，留白清晰、对比强。"
+        )
+    fc = params.get("factory_context")
+    pc = pack.get("post_checklist") if isinstance(pack.get("post_checklist"), dict) else {}
+    boost_where = str(pc.get("boost_where", "标题或正文前 80 字"))
+    emoji_note = str(pc.get("emoji_note", "正文或标题旁至少 1 个相关 emoji"))
+    cta_note = str(pc.get("cta_note", "结尾引导评论/收藏/关注其一"))
+    notes_out = str(
+        pack.get("notes")
+        or "Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id."
     )
     post_checklist: dict[str, Any] = {
-        "must_include_boost_keyword": {"keyword": kw, "where": "标题或正文前 80 字"},
-        "emoji": {"min_count": 1, "note": "正文或标题旁至少 1 个相关 emoji"},
+        "must_include_boost_keyword": {"keyword": kw, "where": boost_where},
+        "emoji": {"min_count": 1, "note": emoji_note},
         "image": {"aspect_ratio": "1080x1440", "min_short_edge_px": 1080},
         "hashtags": {"min_count": 3, "suggested": hashtags},
-        "cta": {"note": "结尾引导评论/收藏/关注其一"},
+        "cta": {"note": cta_note},
     }
+    if isinstance(fc, dict) and fc:
+        post_checklist["factory_context"] = fc
     return {
         "experiment_variant_id": vid,
         "headline": headline,
@@ -457,8 +559,32 @@ def _run_prepare_xhs_post(params: dict[str, Any]) -> dict[str, Any]:
         "image_prompt": image_prompt,
         "post_checklist": post_checklist,
         "awaiting_manual_publish": True,
-        "notes": "Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id.",
+        "notes": notes_out,
     }
+
+
+def _run_extract_viral_patterns(params: dict[str, Any]) -> dict[str, Any]:
+    topic = str(params.get("topic", "")).strip()
+    try:
+        n = int(params.get("sample_size", 12))
+    except (TypeError, ValueError):
+        n = 12
+    return xhs_factory.extract_viral_patterns(topic, n)
+
+
+def _run_recreate_content(params: dict[str, Any]) -> dict[str, Any]:
+    original = str(params.get("original_text", "")).strip()
+    gene = params.get("gene_sop", {})
+    style = str(params.get("style", "sharp")).strip()
+    return xhs_factory.recreate_content(original, gene, style)
+
+
+def _run_predict_viral_score(params: dict[str, Any]) -> dict[str, Any]:
+    text = str(params.get("recreated_text", "")).strip()
+    gene = params.get("gene_sop", {})
+    lib = params.get("case_library")
+    cl = lib if isinstance(lib, list) else None
+    return xhs_factory.predict_viral_score(text, gene, cl)
 
 
 def _run_sync_manual_result(params: dict[str, Any]) -> dict[str, Any]:
@@ -548,6 +674,9 @@ OPERATORS: dict[str, Operator] = {
     "publish_and_monitor": _run_publish_and_monitor,
     "predict_traffic": _run_predict_traffic,
     "prepare_xhs_post": _run_prepare_xhs_post,
+    "extract_viral_patterns": _run_extract_viral_patterns,
+    "recreate_content": _run_recreate_content,
+    "predict_viral_score": _run_predict_viral_score,
     "sync_manual_result": _run_sync_manual_result,
     "fetch_xhs_metrics": _run_fetch_xhs_metrics,
     "flow_echo": _run_flow_echo,
@@ -640,9 +769,21 @@ def test_link():
 
 @app.get("/")
 def root():
+    mm = (os.environ.get("MINIMAX_MODEL") or "").strip()
+    probe = minimax_client.minimax_key_probe()
     return {
         "service": "openclaw",
         "hermes_url": os.environ.get("HERMES_URL", ""),
+        "minimax_ready": minimax_client.minimax_configured(),
+        "minimax_key_ok": bool(probe.get("ok")),
+        "minimax_probe": {
+            "ok": bool(probe.get("ok")),
+            "cached": bool(probe.get("cached")),
+            "error": probe.get("error"),
+            "base_status_code": probe.get("base_status_code"),
+            "skipped": bool(probe.get("skipped")),
+        },
+        "minimax_model": mm or None,
         "traffic_sim": {
             "boost_keyword": _boost_keyword(),
             "likes_if_hit": _likes_if_hit(),

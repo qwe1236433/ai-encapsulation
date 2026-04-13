@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 
 LINK_TIMEOUT_SEC = 5.0
-PROCESS_TIMEOUT_SEC = 60.0
+try:
+    PROCESS_TIMEOUT_SEC = max(30.0, float(os.environ.get("HERMES_PROCESS_TIMEOUT_SEC") or "60"))
+except ValueError:
+    PROCESS_TIMEOUT_SEC = 60.0
 
 FLOW_ACTIONS: list[str] = [
     "analyze_trends",
@@ -18,6 +21,9 @@ FLOW_ACTIONS: list[str] = [
     "fetch_metrics",
     "publish_and_monitor",
     "predict_traffic",
+    "extract_viral_patterns",
+    "recreate_content",
+    "predict_viral_score",
     "prepare_xhs_post",
     "fetch_xhs_metrics",
 ]
@@ -56,6 +62,22 @@ def soft_verify_enabled() -> bool:
         "yes",
         "on",
     )
+
+
+def recreate_min_title_len() -> int:
+    """二创标题最短字符；过短易在 prepare 阶段被当成「无标题」而落入英文 goal 兜底。"""
+    try:
+        return max(2, int(os.environ.get("HERMES_RECREATE_MIN_TITLE_LEN") or "8"))
+    except ValueError:
+        return 8
+
+
+def recreate_min_body_len() -> int:
+    """二创正文最短字符；须与 prepare 采用正文的门槛同量级（见 openclaw main prepare）。"""
+    try:
+        return max(8, int(os.environ.get("HERMES_RECREATE_MIN_BODY_LEN") or "80"))
+    except ValueError:
+        return 80
 
 
 def traffic_boost_keyword() -> str:
@@ -103,7 +125,11 @@ def llm_enabled() -> bool:
 
 
 def ollama_host() -> str:
-    return (os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434").strip().rstrip("/")
+    """Ollama 基址；若无 http(s) 前缀则补全，避免出现 unknown url type '0.0.0.0/api/chat'。"""
+    raw = (os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434").strip().rstrip("/")
+    if raw and not raw.lower().startswith(("http://", "https://")):
+        raw = f"http://{raw}"
+    return raw
 
 
 def hermes_model() -> str:

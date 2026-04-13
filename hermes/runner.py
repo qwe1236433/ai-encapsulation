@@ -54,6 +54,8 @@ class TAVCRunner:
     def run(self, goal: str, max_attempts: int | None = None) -> models.TAVCRunResult:
         ma = max_attempts if max_attempts is not None else self.max_default
         ma = max(1, min(8, ma))
+        if brain.is_xhs_factory_goal(goal):
+            ma = max(ma, 6)
         trajectory: list[dict[str, Any]] = []
         neg_pool: list[dict[str, Any]] = []
 
@@ -326,6 +328,30 @@ class TAVCRunner:
                         )
                     except Exception:
                         logger.exception("[%s] case_library verify feedback (pass) failed", self.task_id)
+                    follow = brain.xhs_pipeline_followup(goal, trajectory, current)
+                    if follow:
+                        trajectory.append(
+                            models.trajectory_step_to_jsonable(
+                                models.TrajectoryThinkStep(
+                                    plan={
+                                        "think_mode": "xhs_factory_followup",
+                                        "next_action": follow["action"],
+                                        "variant_id": follow.get("variant_id"),
+                                    }
+                                )
+                            )
+                        )
+                        current = {
+                            "action": follow["action"],
+                            "params": dict(follow.get("params") or {}),
+                            "variant_id": str(follow.get("variant_id") or current.get("variant_id") or "v1.0"),
+                        }
+                        self._state["trajectory"] = trajectory
+                        self._flush()
+                        logger.info(
+                            "[%s] XHS factory chain advance → %s", self.task_id, current["action"]
+                        )
+                        continue
                     final_pass = True
                     self._state["candidate_formula"] = {
                         "variant_id": current.get("variant_id"),

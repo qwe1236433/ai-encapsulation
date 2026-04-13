@@ -1,0 +1,114 @@
+﻿========== XHS factory export ==========
+时间: 2026-04-13 21:10:36
+任务ID(task_id): ff21c3af-5934-4ee3-9e62-62ff24027599
+目标(goal): XHS note: side hustle review, viral title and body structure
+final_status: paused_manual
+lifecycle_phase: awaiting_manual_publish
+查询完整JSON: GET http://127.0.0.1:8080/task/ff21c3af-5934-4ee3-9e62-62ff24027599
+
+【标题 headline】
+从月入300到稳定副业｜普通人的3个阶段突破实录
+
+【正文 body】
+hi～我是从0开始做副业的小透明🧡
+今天想和大家聊聊我这半年的真实经历
+希望能给正在焦虑的你一点参考
+
+🔹第一阶段：迷茫期
+刚起步时我也超级焦虑
+看着别人月入过万 自己却连方向都没有
+每天都在想"我到底适合什么"
+
+🔹第二阶段：摸索期
+开始尝试了3种不同的方向
+失败过、踩过坑、也怀疑过自己
+但慢慢发现 原来试错也是成长的一部分
+
+🔹第三阶段：突破期
+找到适合自己的赛道后
+收入从300到3000到现在的稳定增长
+其实没有一夜暴富 但真的很踏实
+
+💭我的感悟：
+副业真的急不得 稳比快更重要
+找对方向+持续输出+保持耐心
+你也可以的！
+
+大家现在都做到哪个阶段啦？
+评论区聊聊呗～
+
+【话题标签 hashtags】
+#副业真实记录 #稳扎稳打 #成长干货 #焦虑缓解 #普通人的逆袭
+
+【配图描述 image_prompt】
+小红书竖版封面 1080x1440，主标题「从月入300到稳定副业｜普通人的3个阶段突破实录」，风格偏steady，留白清晰、对比强。
+
+【备注 notes】
+Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id.
+
+========== end ==========
+
+========== XHS factory export ==========
+时间: 2026-04-13 21:50:27
+任务ID(task_id): 2110c998-53b1-43f7-b2fd-bbc3ce883599
+目标(goal): XHS note: side hustle review, viral title and body structure
+final_status: paused_manual
+lifecycle_phase: awaiting_manual_publish
+查询完整JSON: GET http://127.0.0.1:8080/task/2110c998-53b1-43f7-b2fd-bbc3ce883599
+
+【标题 headline】
+XHS note: side hustle review, viral title and body structure·steady视角
+
+【正文 body】
+（steady）关于「XHS note: side hustle review, viral titl」：开头共鸣 + 3 条可执行要点 + 结尾互动。
+首段请自然带上爆词「救命」（可用同义表达）。
+文末可加 1–2 个表情符号。
+
+【话题标签 hashtags】
+#XHS note: #干货分享 #steady
+
+【配图描述 image_prompt】
+小红书竖版封面 1080x1440，主标题「XHS note: side hustle re」，风格偏steady，留白清晰、对比强。
+
+【备注 notes】
+Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id.
+
+========== end ==========
+
+========== XHS factory export ==========
+时间: 2026-04-13 22:03:11
+任务ID(task_id): 52a230db-f9c2-413c-ba0d-e600d43a1ab5
+目标(goal): XHS note: side hustle review, viral title and body structure
+final_status: paused_manual
+lifecycle_phase: awaiting_manual_publish
+查询完整JSON: GET http://127.0.0.1:8080/task/52a230db-f9c2-413c-ba0d-e600d43a1ab5
+
+【标题 headline】
+月入过万是真的吗？我把热门副业全测了一遍...
+
+【正文 body】
+现在的副业广告满天飞
+“月入过万”“轻松变现”
+但真相到底是怎样的？
+
+我决定亲自测
+测了写作变现、电商带货、短视频等7种热门副业
+记录：投入时间 / 实际收益 / 真实难度
+
+结果...
+和我想象的不一样
+
+全程无滤镜
+想知道哪种副业真的值得做吗？
+
+【话题标签 hashtags】
+#副业 #副业测评 #赚钱真相 #避坑指南
+
+【配图描述 image_prompt】
+小红书竖版封面 1080x1440，主标题「月入过万是真的吗？我把热门副业全测了一遍...」，风格偏minimal，留白清晰、对比强。
+
+【备注 notes】
+Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id.
+
+========== end ==========
+

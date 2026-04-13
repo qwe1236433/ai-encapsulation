@@ -42,6 +42,13 @@ def verify_openclaw_response(action: str, openclaw_body: dict[str, Any] | None) 
             and "publish_id" in r["publish"]
             and "predicted_likes" in r["metrics"]
         )
+    if action == "extract_viral_patterns":
+        return all(k in r for k in ("viral_sop", "core_hook", "target_emotion", "topic"))
+    if action == "recreate_content":
+        rc = r.get("recreated")
+        return isinstance(rc, dict) and all(k in rc for k in ("title", "body", "tags"))
+    if action == "predict_viral_score":
+        return all(k in r for k in ("predicted_score", "confidence", "risk_factor"))
     if action == "prepare_xhs_post":
         return (
             "headline" in r
@@ -146,6 +153,37 @@ def verify_flow_rules(action: str, openclaw_body: dict[str, Any] | None) -> tupl
         except (KeyError, TypeError, ValueError):
             return False, "compound_metrics_invalid"
         return True, "rules_ok"
+    if action == "extract_viral_patterns":
+        for k in ("viral_sop", "core_hook", "target_emotion"):
+            if len(str(r.get(k, "")).strip()) < 2:
+                return False, f"extract_field_too_short:{k}"
+        try:
+            n = int(r.get("sample_size_effective") or 0)
+        except (TypeError, ValueError):
+            return False, "extract_sample_invalid"
+        if n < 1:
+            return False, "extract_no_samples"
+        return True, "rules_ok"
+    if action == "recreate_content":
+        rc = r.get("recreated") if isinstance(r.get("recreated"), dict) else {}
+        mt = settings.recreate_min_title_len()
+        mb = settings.recreate_min_body_len()
+        if len(str(rc.get("title", "")).strip()) < mt:
+            return False, "recreate_title_too_short"
+        if len(str(rc.get("body", "")).strip()) < mb:
+            return False, "recreate_body_too_short"
+        return True, "rules_ok"
+    if action == "predict_viral_score":
+        try:
+            ps = float(r["predicted_score"])
+            cf = float(r["confidence"])
+        except (KeyError, TypeError, ValueError):
+            return False, "predict_score_invalid"
+        if not 0.0 <= ps <= 1.0:
+            return False, "predicted_score_oob"
+        if not 0.0 <= cf <= 1.0:
+            return False, "confidence_oob"
+        return True, "rules_ok"
     if action == "prepare_xhs_post":
         if len(str(r.get("headline", "")).strip()) < 4:
             return False, "xhs_headline_too_short"
@@ -230,6 +268,9 @@ def soft_review(action: str, goal: str, openclaw_body: dict[str, Any]) -> tuple[
         "fetch_xhs_metrics",
         "gen_body",
         "publish_and_monitor",
+        "extract_viral_patterns",
+        "recreate_content",
+        "predict_viral_score",
     ):
         reason = "soft_defer_hard_metrics"
     elif action == "generate_hook_lines":

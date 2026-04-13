@@ -103,7 +103,11 @@ class LLMManager:
             f"Keys: action (string, must be one of: {actions_literal}), "
             "params (object, MUST include all required fields for that action), variant_id (string).\n"
             "Required: predict_traffic needs params.headline (non-empty string). "
-            "generate_headline needs topic, tone, boost. analyze_trends needs symbol, window_min (number).\n"
+            "generate_headline needs topic, tone, boost. analyze_trends needs symbol, window_min (number). "
+            "XHS content factory: extract_viral_patterns needs topic, sample_size (number). "
+            "recreate_content needs original_text, gene_sop (object), style. "
+            "predict_viral_score needs recreated_text, gene_sop (object). "
+            "For 小红书/xhs goals prefer starting with extract_viral_patterns.\n"
             "Example: {\"action\":\"generate_headline\",\"params\":{\"topic\":\"复盘\",\"tone\":\"sharp\",\"boost\":false},\"variant_id\":\"v1.llm\"}"
         )
         user = f"User goal:\n{goal}\n\nRelevant past successes (JSON lines, may be empty):\n{case_context or '(none)'}\n\nChoose the first OpenClaw action and params."

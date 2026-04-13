@@ -13,6 +13,126 @@ import settings
 
 logger = logging.getLogger(__name__)
 
+_XHS_FACTORY_ACTIONS = frozenset({"extract_viral_patterns", "recreate_content", "predict_viral_score"})
+
+
+def is_xhs_factory_goal(goal: str) -> bool:
+    g = (goal or "").strip()
+    gl = g.lower()
+    return any(k in g for k in ("小红书", "小红薯")) or "xhs" in gl
+
+
+def collect_xhs_factory_results(trajectory: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for step in trajectory:
+        if step.get("phase") != "act":
+            continue
+        env = step.get("envelope") or {}
+        act = str(env.get("action") or "")
+        if act not in _XHS_FACTORY_ACTIONS:
+            continue
+        oc = env.get("openclaw")
+        if not isinstance(oc, dict) or oc.get("status") != "success":
+            continue
+        r = oc.get("result")
+        if isinstance(r, dict):
+            out[act] = r
+    return out
+
+
+def first_think_plan_params(trajectory: list[dict[str, Any]]) -> dict[str, Any]:
+    for step in trajectory:
+        if step.get("phase") != "think":
+            continue
+        plan = step.get("plan") or {}
+        p = plan.get("params")
+        if isinstance(p, dict):
+            return p
+    return {}
+
+
+def xhs_pipeline_followup(
+    goal: str, trajectory: list[dict[str, Any]], current: dict[str, Any]
+) -> dict[str, Any] | None:
+    """extract → recreate → predict → prepare_xhs_post；仅在各步 Verify 通过后由 runner 调用。"""
+    a = str(current.get("action") or "")
+    if a not in _XHS_FACTORY_ACTIONS:
+        return None
+    ctx = collect_xhs_factory_results(trajectory)
+    p0 = dict(current.get("params") or {})
+    vid = str(current.get("variant_id") or p0.get("variant_id") or "vXHS.0")
+    tone0 = str(first_think_plan_params(trajectory).get("tone") or "steady")
+
+    if a == "extract_viral_patterns":
+        gene = ctx.get("extract_viral_patterns") or {}
+        orig = str(p0.get("source_text") or goal or "").strip()[:5000]
+        return {
+            "action": "recreate_content",
+            "params": {
+                "original_text": orig,
+                "gene_sop": {
+                    "viral_sop": gene.get("viral_sop"),
+                    "core_hook": gene.get("core_hook"),
+                    "target_emotion": gene.get("target_emotion"),
+                },
+                "style": str(p0.get("tone") or "sharp"),
+                "variant_id": vid,
+            },
+            "variant_id": vid,
+        }
+    if a == "recreate_content":
+        gene = ctx.get("extract_viral_patterns") or {}
+        rec = ctx.get("recreate_content") or {}
+        rt = rec.get("recreated") if isinstance(rec.get("recreated"), dict) else {}
+        title = str(rt.get("title") or "")
+        body = str(rt.get("body") or "")
+        text = f"{title}\n{body}".strip()
+        return {
+            "action": "predict_viral_score",
+            "params": {
+                "recreated_text": text,
+                "gene_sop": {
+                    "viral_sop": gene.get("viral_sop"),
+                    "core_hook": gene.get("core_hook"),
+                    "target_emotion": gene.get("target_emotion"),
+                },
+                "case_library": [],
+                "variant_id": vid,
+            },
+            "variant_id": vid,
+        }
+    if a == "predict_viral_score":
+        ext = ctx.get("extract_viral_patterns") or {}
+        rec = ctx.get("recreate_content") or {}
+        rt = rec.get("recreated") if isinstance(rec.get("recreated"), dict) else {}
+        pred = ctx.get("predict_viral_score") or {}
+        topic = str(ext.get("topic") or goal[:90] or "流量主题")
+        hl = str(rt.get("title") or "")
+        body = str(rt.get("body") or "")
+        tags = rt.get("tags")
+        if isinstance(tags, list) and len(tags) >= 3:
+            ht = [str(x).strip()[:24] for x in tags[:12] if str(x).strip()]
+        else:
+            ht = [topic[:10] or "复盘", "干货分享", tone0[:8] or "成长"]
+        return {
+            "action": "prepare_xhs_post",
+            "params": {
+                "topic": topic,
+                "tone": tone0,
+                "variant_id": vid,
+                "headline": hl[:80],
+                "body": body[:2000],
+                "hashtags": ht,
+                "factory_context": {
+                    "predicted_score": pred.get("predicted_score"),
+                    "confidence": pred.get("confidence"),
+                    "risk_factor": pred.get("risk_factor"),
+                },
+            },
+            "variant_id": vid,
+        }
+    return None
+
 
 def last_hard_soft_verify(trajectory: list[dict[str, Any]]) -> tuple[str, str]:
     for step in reversed(trajectory):
@@ -69,10 +189,34 @@ def bold_params_for_action(action: str, goal: str, kw: str) -> dict[str, Any]:
         }
     if action == "fetch_metrics":
         return {"headline": g[:120] or "mock", "publish_id": ""}
+    if action == "extract_viral_patterns":
+        return {
+            "topic": g[:100] or "流量主题",
+            "sample_size": random.choice([8, 12, 16]),
+            "source_text": g[:800],
+            "tone": random.choice(["sharp", "steady", "minimal"]),
+        }
+    if action == "recreate_content":
+        return {
+            "original_text": g[:500] or "原文占位",
+            "gene_sop": {
+                "viral_sop": "对照式",
+                "core_hook": "反差开场",
+                "target_emotion": "共鸣",
+            },
+            "style": random.choice(["sharp", "steady", "minimal"]),
+        }
+    if action == "predict_viral_score":
+        return {
+            "recreated_text": (g[:400] or "标题\n正文占位"),
+            "gene_sop": {"viral_sop": "对照式", "core_hook": "", "target_emotion": "共鸣"},
+            "case_library": [],
+        }
     if action == "prepare_xhs_post":
         return {
             "topic": g[:90] or "流量主题",
             "tone": random.choice(["sharp", "steady", "minimal"]),
+            "variant_id": f"vXHS.{random.randint(10, 99)}",
         }
     if action == "fetch_xhs_metrics":
         return {
@@ -160,14 +304,21 @@ def pseudo_think(goal: str) -> dict[str, Any]:
     g = (goal or "").strip()
     gl = g.lower()
     kw = settings.traffic_boost_keyword()
-    if any(k in g for k in ("小红书", "小红薯")) or "xhs" in gl:
+    if is_xhs_factory_goal(g):
+        vid = f"vXHS.{random.randint(10, 99)}"
+        tone = random.choice(["sharp", "steady", "minimal"])
         return {
-            "action": "prepare_xhs_post",
+            "action": "extract_viral_patterns",
             "params": {
-                "topic": g[:90] if g else "流量主题",
-                "tone": random.choice(["sharp", "steady", "minimal"]),
+                "topic": g[:100] if g else "流量主题",
+                "sample_size": random.choice([8, 12, 16]),
+                "source_text": g[:800],
+                "tone": tone,
+                "variant_id": vid,
             },
-            "variant_id": f"vXHS.{random.randint(10, 99)}",
+            "variant_id": vid,
+            "s1_pipeline_hint": "Op1 extract_viral_patterns → plan gene_sop → Op2 recreate_content "
+            "(runner chains predict_viral_score → prepare_xhs_post)",
         }
     if any(k in g for k in ("文案", "出词", "标题", "话术", "钩子", "爆款")):
         topic0 = (g[:60] if g else "流量主题")
@@ -284,6 +435,23 @@ def apply_jump_correction(revision: dict[str, Any], goal: str, kw: str) -> dict[
         params["channel"] = random.choice(pool_ch or ["mock_dy"])
         hl = str(params.get("headline") or goal[:100] or "mock")
         params["headline"] = ("跳出测试·" + hl)[-120:]
+    elif action == "extract_viral_patterns":
+        touched = True
+        try:
+            n = int(params.get("sample_size") or 12)
+        except (TypeError, ValueError):
+            n = 12
+        params["sample_size"] = max(5, min(40, n + random.choice([4, 8, 12])))
+        params["topic"] = ("视角切换·" + str(params.get("topic") or goal[:80] or "主题"))[-100:]
+    elif action == "recreate_content":
+        touched = True
+        params["style"] = _TONE_JUMP.get(str(params.get("style") or ""), random.choice(["sharp", "minimal"]))
+        gh = dict(params.get("gene_sop") or {})
+        gh["viral_sop"] = random.choice(["对照式", "递进式", "悬念前置", "清单体"])
+        params["gene_sop"] = gh
+    elif action == "predict_viral_score":
+        touched = True
+        params["recreated_text"] = ("改写锚点·" + str(params.get("recreated_text") or goal[:200]))[-800:]
     elif action == "gen_body":
         touched = True
         params["tone"] = _TONE_JUMP.get(str(params.get("tone") or ""), "sharp")

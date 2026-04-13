@@ -1,3 +1,9 @@
-# OpenClaw 执行面配置（占位，可按项目替换）
+# OpenClaw 执行面（本仓库）
+#
+# 注意：此处是「Hermes 的战术执行微服务」——FastAPI + 算子，并非 openclaw.ai 官方安装包里的
+# OpenClaw Gateway（TypeScript、插件 minimax-portal-auth、OAuth 浏览器登录等）。
+# 官方 OpenClaw 的 MiniMax OAuth 流程见：https://platform.minimax.io/docs/token-plan/openclaw
+# 若未来改为由官方 Gateway 提供模型调用，应删掉/绕开本服务内的 HTTP 直连 MiniMax，改为调 Gateway。
+#
 service: openclaw
 log_level: info

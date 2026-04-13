@@ -1,0 +1,50 @@
+﻿========== XHS factory export ==========
+时间: 2026-04-13 21:10:36
+任务ID(task_id): ff21c3af-5934-4ee3-9e62-62ff24027599
+目标(goal): XHS note: side hustle review, viral title and body structure
+final_status: paused_manual
+lifecycle_phase: awaiting_manual_publish
+查询完整JSON: GET http://127.0.0.1:8080/task/ff21c3af-5934-4ee3-9e62-62ff24027599
+
+【标题 headline】
+从月入300到稳定副业｜普通人的3个阶段突破实录
+
+【正文 body】
+hi～我是从0开始做副业的小透明🧡
+今天想和大家聊聊我这半年的真实经历
+希望能给正在焦虑的你一点参考
+
+🔹第一阶段：迷茫期
+刚起步时我也超级焦虑
+看着别人月入过万 自己却连方向都没有
+每天都在想"我到底适合什么"
+
+🔹第二阶段：摸索期
+开始尝试了3种不同的方向
+失败过、踩过坑、也怀疑过自己
+但慢慢发现 原来试错也是成长的一部分
+
+🔹第三阶段：突破期
+找到适合自己的赛道后
+收入从300到3000到现在的稳定增长
+其实没有一夜暴富 但真的很踏实
+
+💭我的感悟：
+副业真的急不得 稳比快更重要
+找对方向+持续输出+保持耐心
+你也可以的！
+
+大家现在都做到哪个阶段啦？
+评论区聊聊呗～
+
+【话题标签 hashtags】
+#副业真实记录 #稳扎稳打 #成长干货 #焦虑缓解 #普通人的逆袭
+
+【配图描述 image_prompt】
+小红书竖版封面 1080x1440，主标题「从月入300到稳定副业｜普通人的3个阶段突破实录」，风格偏steady，留白清晰、对比强。
+
+【备注 notes】
+Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id.
+
+========== end ==========
+

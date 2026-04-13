@@ -29,6 +29,10 @@ Thumbs.db
 bench-last-run.json
 reports/
 
+# bench 导出的文章 txt（含生成文案，勿提交）；目录结构见 outputs/README.txt
+outputs/xhs-articles-log.txt
+outputs/xhs-runs/*.txt
+
 # 自动 push 日志（勿提交）
 .local/
 

@@ -1,6 +1,7 @@
 """
 本地流程控制台 API：与 Hermes / OpenClaw / export / bench 串联。
 仅绑定 127.0.0.1，勿暴露公网。
+研究评估：POST /api/model/evaluate（仅产出指标与 artifact；晋升用 scripts/promote_baseline.ps1）。
 
 启动（仓库根目录）:
   python -m pip install -r api/requirements.txt
@@ -9,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -41,6 +43,7 @@ RUNTIME_GOALS_DIR = REPO_ROOT / "outputs" / ".runtime-goals"
 GOAL_TEXT_MAX_CHARS = 50_000
 
 _EXPORT_DEDUPE_ALLOWED = frozenset({"none", "key", "content"})
+_EXPORT_VALIDATE_ALLOWED = frozenset({"none", "report", "warn", "fail"})
 
 
 def _resolve_export_dedupe(override: str | None) -> str:
@@ -80,6 +83,14 @@ def _export_to_feed_argv(
         argv.extend(["--digest-out", digest_out.strip()])
     if (batch_id or "").strip():
         argv.extend(["--batch-id", batch_id.strip()])
+    vm = (os.environ.get("FLOW_API_EXPORT_VALIDATE_MODE") or "none").strip().lower()
+    if vm not in _EXPORT_VALIDATE_ALLOWED:
+        vm = "none"
+    if vm != "none":
+        argv.extend(["--validate-mode", vm])
+    vs = (os.environ.get("FLOW_API_EXPORT_VALIDATE_SCHEMA") or "").strip()
+    if vs:
+        argv.extend(["--validate-schema", vs])
     return argv
 
 _jobs_lock = threading.Lock()
@@ -351,6 +362,32 @@ class FullPipelineBody(BaseModel):
     )
 
 
+class ModelEvaluateBody(BaseModel):
+    """离线评估：运行 train_baseline_v0并返回指标摘要；不修改 XHS_FACTORY_BASELINE_JSON、不自动部署。"""
+
+    features_path: str | None = Field(
+        default=None,
+        description="特征 CSV；默认 research/features_v0.csv（相对路径相对仓库根）",
+    )
+    labels_spec: str | None = Field(
+        default=None,
+        description="标签契约；默认 research/labels_spec.json",
+    )
+    out_path: str | None = Field(
+        default=None,
+        description="artifact写出路径；省略则 research/artifacts/api_eval_<8位uuid>.json",
+    )
+    cv_folds: int = Field(default=5, ge=0, le=20)
+    test_size: float = Field(default=0.3, gt=0.0, lt=1.0)
+    seed: int = Field(default=42)
+    allow_mixed_batch: bool = Field(default=False, description="对应 train_baseline --allow-mixed-batch")
+
+
+def _resolve_repo_path(rel_or_abs: str) -> Path:
+    p = Path(rel_or_abs).expanduser()
+    return p.resolve() if p.is_absolute() else (REPO_ROOT / p).resolve()
+
+
 @app.get("/api/health")
 def api_health() -> dict[str, Any]:
     hermes_ok = openclaw_ok = False
@@ -383,8 +420,93 @@ def api_config() -> dict[str, Any]:
         "hermes_url": DEFAULT_HERMES.rstrip("/"),
         "openclaw_url": DEFAULT_OPENCLAW.rstrip("/"),
         "export_dedupe_default": _resolve_export_dedupe(None),
+        "export_validate_mode": (
+            vm
+            if (vm := (os.environ.get("FLOW_API_EXPORT_VALIDATE_MODE") or "none").strip().lower())
+            in _EXPORT_VALIDATE_ALLOWED
+            else "none"
+        ),
+        "export_validate_schema": (os.environ.get("FLOW_API_EXPORT_VALIDATE_SCHEMA") or "").strip() or None,
         "feed_digest_out": (os.environ.get("FLOW_API_FEED_DIGEST_OUT") or "").strip() or None,
         "feed_batch_id": (os.environ.get("FLOW_API_FEED_BATCH_ID") or "").strip() or None,
+    }
+
+
+@app.post("/api/model/evaluate")
+def api_model_evaluate(body: ModelEvaluateBody) -> dict[str, Any]:
+    """训练基线并返回可审计指标；晋升部署请用 scripts/promote_baseline.ps1 人工或 CI 执行。"""
+    features = _resolve_repo_path(body.features_path or "research/features_v0.csv")
+    labels = _resolve_repo_path(body.labels_spec or "research/labels_spec.json")
+    if not features.is_file():
+        raise HTTPException(status_code=400, detail=f"features not found: {features}")
+    if not labels.is_file():
+        raise HTTPException(status_code=400, detail=f"labels_spec not found: {labels}")
+    jid = str(uuid.uuid4())
+    if (body.out_path or "").strip():
+        out = _resolve_repo_path(body.out_path.strip())
+    else:
+        out = (REPO_ROOT / "research" / "artifacts" / f"api_eval_{jid[:8]}.json").resolve()
+    script = REPO_ROOT / "research" / "train_baseline_v0.py"
+    if not script.is_file():
+        raise HTTPException(status_code=500, detail="train_baseline_v0.py missing")
+    argv: list[str] = [
+        sys.executable,
+        str(script),
+        "--features",
+        str(features),
+        "--out",
+        str(out),
+        "--labels-spec",
+        str(labels),
+        "--test-size",
+        str(body.test_size),
+        "--seed",
+        str(body.seed),
+    ]
+    if body.cv_folds > 0:
+        argv.extend(["--cv-folds", str(body.cv_folds)])
+    if body.allow_mixed_batch:
+        argv.append("--allow-mixed-batch")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=600,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired as e:
+        raise HTTPException(status_code=504, detail=f"train timeout: {e}") from e
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "train_baseline_v0 failed",
+                "returncode": proc.returncode,
+                "stderr_tail": (proc.stderr or "")[-8000:],
+                "stdout_tail": (proc.stdout or "")[-4000:],
+            },
+        )
+    try:
+        raw = json.loads(out.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(status_code=500, detail=f"artifact read failed: {e}") from e
+    return {
+        "job_id": jid,
+        "artifact_path": str(out),
+        "schema": raw.get("schema"),
+        "n_samples": raw.get("n_samples"),
+        "holdout_roc_auc": raw.get("holdout_roc_auc"),
+        "holdout_brier_score": raw.get("holdout_brier_score"),
+        "cross_validation": raw.get("cross_validation"),
+        "input_features_sha256": raw.get("input_features_sha256"),
+        "input_features_path": raw.get("input_features_path"),
+        "features_provenance": raw.get("features_provenance"),
+        "generated_at_utc": raw.get("generated_at_utc"),
+        "labels_spec_path": raw.get("labels_spec_path"),
     }
 
 

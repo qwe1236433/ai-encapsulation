@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/schemas/xhs_feed_item_v1.schema.json",
+  "title": "xhs_factory normalized feed item (single array element)",
+  "type": "object",
+  "required": [
+    "title_hint",
+    "body_hint",
+    "like_proxy",
+    "sop_tag",
+    "emotion_tag"
+  ],
+  "properties": {
+    "title_hint": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "body_hint": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "like_proxy": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sop_tag": {
+      "type": "string",
+      "maxLength": 32
+    },
+    "emotion_tag": {
+      "type": "string",
+      "maxLength": 32
+    }
+  },
+  "additionalProperties": true
+}

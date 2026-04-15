@@ -1,0 +1,3 @@
+# 可选：为 export_to_xhs_feed.py 的 --validate-schema 使用 JSON Schema 校验时安装
+#   python -m pip install -r scripts/requirements-feed-tools.txt
+jsonschema>=4.17.0,<5

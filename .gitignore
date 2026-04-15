@@ -21,7 +21,8 @@ openclaw/data/
 .DS_Store
 Thumbs.db
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 *.swp
 *~
 
@@ -32,6 +33,8 @@ reports/
 # bench 导出的文章 txt（含生成文案，勿提交）；目录结构见 outputs/README.txt
 outputs/xhs-articles-log.txt
 outputs/xhs-runs/*.txt
+# 网页/API 传入的临时 goal 正文
+outputs/.runtime-goals/
 
 # 自动 push 日志（勿提交）
 .local/
@@ -39,3 +42,9 @@ outputs/xhs-runs/*.txt
 # 本地 smoke / 同步脚本生成的任务快照
 *-last-task.json
 last-task-sync.json
+
+# 爆文研究：本地特征表与训练产物（可复现命令见 research/EXPERIMENT_REPORT.md）
+research/features_v0.csv
+research/artifacts/*.json
+# 从 labels_spec.example.json 复制并本地修改阈值/说明（勿提交个人契约）
+research/labels_spec.json

@@ -1,15 +1,22 @@
 """
 小红书「流量内容工厂」：挖掘 → 二创 → 预测。
 
-当前为可替换的模拟实现：真实数据接入时只需改 `_fetch`（及下游解析）。
+- 挖掘：默认对样本做 **log1p(点赞)** 加权的标签聚合 + 频次众数对照 + 标签熵 + Top 证据列表（`quantitative`），
+  大模型仅可选补充 `formulas`，不再默认覆盖主标签。
+- 预测：默认 **linear_clamp_v1** 可复现线性分 + `score_breakdown`；`XHS_FACTORY_PREDICT_USE_LLM=1` 时才用 MiniMax 覆盖分数。
+- 样本接入：改 `_fetch` 或环境变量 `XHS_FACTORY_*`。
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any
 
 import minimax_client
@@ -25,11 +32,93 @@ def _factory_use_minimax() -> bool:
     return v not in ("0", "false", "no", "off")
 
 
-def _fetch(topic: str, sample_size: int) -> list[dict[str, Any]]:
-    """
-    占位：未来接 XHS API / 爬虫。返回若干条带 title/body_hint/like_proxy 的样本。
-    """
-    n = max(3, min(48, int(sample_size)))
+def _topic_file_slug(topic: str) -> str:
+    return hashlib.sha256((topic or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _normalize_external_sample(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """把 MediaCrawler / 自建导出等字段映射为工厂内部结构。"""
+    if not isinstance(raw, dict):
+        return None
+    title = (
+        raw.get("title_hint")
+        or raw.get("title")
+        or raw.get("note_title")
+        or raw.get("desc")
+        or raw.get("description")
+    )
+    body = (
+        raw.get("body_hint")
+        or raw.get("content")
+        or raw.get("note_text")
+        or raw.get("desc")
+        or raw.get("description")
+    )
+    title_s = str(title or "").strip()[:500]
+    body_s = str(body or "").strip()[:2000]
+    if not title_s and not body_s:
+        return None
+    if not title_s:
+        title_s = body_s[:120]
+    if not body_s:
+        body_s = title_s
+    likes = raw.get("like_proxy") or raw.get("liked_count") or raw.get("likes") or raw.get("like_count")
+    try:
+        like_proxy = int(likes) if likes is not None else 100
+    except (TypeError, ValueError):
+        like_proxy = 100
+    sop = str(raw.get("sop_tag") or raw.get("viral_sop") or "对照式").strip()[:32] or "对照式"
+    emo = str(raw.get("emotion_tag") or raw.get("target_emotion") or "共鸣").strip()[:32] or "共鸣"
+    return {
+        "title_hint": title_s,
+        "body_hint": body_s,
+        "like_proxy": max(1, like_proxy),
+        "sop_tag": sop,
+        "emotion_tag": emo,
+    }
+
+
+def _load_json_array_from_path(path: str) -> list[dict[str, Any]]:
+    path = (path or "").strip()
+    if not path or not os.path.isfile(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw_text = f.read()
+    except OSError:
+        return []
+    items: list[Any] = []
+    raw_text_stripped = raw_text.strip()
+    if not raw_text_stripped:
+        return []
+    if raw_text_stripped.startswith("["):
+        try:
+            data = json.loads(raw_text_stripped)
+            items = data if isinstance(data, list) else []
+        except json.JSONDecodeError:
+            return []
+    else:
+        for line in raw_text_stripped.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    items.append(row)
+            except json.JSONDecodeError:
+                continue
+    out: list[dict[str, Any]] = []
+    for row in items:
+        if not isinstance(row, dict):
+            continue
+        norm = _normalize_external_sample(row)
+        if norm:
+            out.append(norm)
+    return out
+
+
+def _fetch_mock(topic: str, n: int) -> list[dict[str, Any]]:
     seed = int(hashlib.sha256((topic or "").encode("utf-8")).hexdigest()[:8], 16)
     sop_pool = ["对照式", "递进式", "悬念前置", "清单体", "故事复盘"]
     emotion_pool = ["共鸣", "焦虑缓解", "爽感", "好奇", "身份认同"]
@@ -46,6 +135,63 @@ def _fetch(topic: str, sample_size: int) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def _fetch_from_http(base_url: str, topic: str, n: int) -> list[dict[str, Any]] | None:
+    base_url = (base_url or "").strip()
+    if not base_url:
+        return None
+    q = urllib.parse.urlencode({"topic": topic, "limit": str(n)})
+    sep = "&" if "?" in base_url else "?"
+    url = f"{base_url}{sep}{q}"
+    try:
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+        data = json.loads(body)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, list):
+        return None
+    out: list[dict[str, Any]] = []
+    for row in data:
+        if isinstance(row, dict):
+            norm = _normalize_external_sample(row)
+            if norm:
+                out.append(norm)
+    return out[:n] if out else None
+
+
+def _fetch(topic: str, sample_size: int) -> list[dict[str, Any]]:
+    """
+    样本来源优先级：HTTP（XHS_FACTORY_FEED_URL）→ 目录分文件/汇总    （XHS_FACTORY_FEED_DIR）→ 单文件（XHS_FACTORY_SAMPLES_PATH）→ 模拟。
+    外部 JSON 可为数组或 JSONL；字段见 _normalize_external_sample。
+    """
+    n = max(3, min(48, int(sample_size)))
+    t = (topic or "").strip()
+
+    feed_url = (os.environ.get("XHS_FACTORY_FEED_URL") or "").strip()
+    if feed_url:
+        got = _fetch_from_http(feed_url, t, n)
+        if got:
+            return got
+
+    feed_dir = (os.environ.get("XHS_FACTORY_FEED_DIR") or "").strip()
+    if feed_dir and os.path.isdir(feed_dir):
+        slug = _topic_file_slug(t)
+        for name in (f"{slug}.json", "samples.json", "feed.json"):
+            p = os.path.join(feed_dir, name)
+            rows = _load_json_array_from_path(p)
+            if rows:
+                return rows[:n]
+
+    samples_path = (os.environ.get("XHS_FACTORY_SAMPLES_PATH") or "").strip()
+    if samples_path:
+        rows = _load_json_array_from_path(samples_path)
+        if rows:
+            return rows[:n]
+
+    return _fetch_mock(t, n)
 
 
 def _default_case_library() -> list[dict[str, Any]]:
@@ -86,24 +232,218 @@ def _norm_gene(gene_sop: Any) -> dict[str, Any]:
     return {"viral_sop": "对照式", "core_hook": "", "target_emotion": "共鸣"}
 
 
+def _extract_use_llm() -> bool:
+    """是否在挖掘阶段调用大模型（默认开，仅补充 formulas；主标签默认已由统计给出）。"""
+    if not _factory_use_minimax():
+        return False
+    v = (os.environ.get("XHS_FACTORY_EXTRACT_USE_LLM") or "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def _extract_llm_overrides_gene() -> bool:
+    """为1 时允许 MiniMax 覆盖 viral_sop / target_emotion / core_hook（旧行为）。"""
+    v = (os.environ.get("XHS_FACTORY_EXTRACT_LLM_OVERRIDES_GENE") or "0").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
+def _predict_use_llm() -> bool:
+    """预测分是否走大模型；默认关闭，仅用确定性公式（见 predict_viral_score）。"""
+    if not minimax_client.minimax_configured():
+        return False
+    v = (os.environ.get("XHS_FACTORY_PREDICT_USE_LLM") or "0").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
+def _xhs_gene_agg_mode() -> str:
+    """viral_sop / target_emotion 主结论：weighted=点赞 log1p 加权；count=纯条数众数。"""
+    m = (os.environ.get("XHS_FACTORY_GENE_AGG_MODE") or "weighted").strip().lower()
+    return "count" if m == "count" else "weighted"
+
+
+def _quantitative_sample_analysis(samples: list[dict[str, Any]], topic: str) -> dict[str, Any]:
+    """
+    可复现的样本统计（不调用大模型）。
+    - 每条样本对标签权重贡献：w = log(1 + max(like_proxy, 0))。
+    - 加权主标签 = argmax_i sum_{样本 j标签为 i} w_j；占比 = 该标签加权和 / 全体加权和。
+    - 标签离散度（自然底 e）：由标签出现频次得 p_i，H = -sum_i p_i log p_i，越高表示套路越分散。
+    """
+    sop_w: dict[str, float] = {}
+    emo_w: dict[str, float] = {}
+    sop_c: dict[str, int] = {}
+    emo_c: dict[str, int] = {}
+    likes_list: list[int] = []
+    title_lens: list[int] = []
+
+    for s in samples:
+        sop = str(s.get("sop_tag") or "对照式").strip() or "对照式"
+        emo = str(s.get("emotion_tag") or "共鸣").strip() or "共鸣"
+        try:
+            lk = max(0, int(s.get("like_proxy") or 0))
+        except (TypeError, ValueError):
+            lk = 0
+        wt = math.log1p(lk)
+        sop_w[sop] = sop_w.get(sop, 0.0) + wt
+        emo_w[emo] = emo_w.get(emo, 0.0) + wt
+        sop_c[sop] = sop_c.get(sop, 0) + 1
+        emo_c[emo] = emo_c.get(emo, 0) + 1
+        likes_list.append(lk)
+        title_lens.append(len(str(s.get("title_hint") or "").strip()))
+
+    def _entropy_from_counts(counts: dict[str, int]) -> float:
+        tot = sum(counts.values())
+        if tot <= 0:
+            return 0.0
+        h = 0.0
+        for c in counts.values():
+            if c <= 0:
+                continue
+            p = c / tot
+            h -= p * math.log(p + 1e-12)
+        return round(h, 4)
+
+    total_w_sop = sum(sop_w.values()) or 1.0
+    total_w_emo = sum(emo_w.values()) or 1.0
+    viral_w = max(sop_w, key=lambda k: sop_w[k]) if sop_w else "对照式"
+    emo_win_w = max(emo_w, key=lambda k: emo_w[k]) if emo_w else "共鸣"
+    viral_c = max(sop_c, key=lambda k: sop_c[k]) if sop_c else "对照式"
+    emo_win_c = max(emo_c, key=lambda k: emo_c[k]) if emo_c else "共鸣"
+    share_sop = round(float(sop_w.get(viral_w, 0.0)) / total_w_sop, 4)
+    share_emo = round(float(emo_w.get(emo_win_w, 0.0)) / total_w_emo, 4)
+
+    indexed = list(enumerate(samples))
+    indexed.sort(key=lambda x: int(x[1].get("like_proxy") or 0), reverse=True)
+    top_evidence: list[dict[str, Any]] = []
+    for _, s in indexed[:5]:
+        top_evidence.append(
+            {
+                "like_proxy": int(s.get("like_proxy") or 0),
+                "title_hint": str(s.get("title_hint") or "")[:160],
+                "sop_tag": str(s.get("sop_tag") or ""),
+                "emotion_tag": str(s.get("emotion_tag") or ""),
+            }
+        )
+
+    sorted_likes = sorted(likes_list)
+    mid = len(sorted_likes) // 2
+    median_like = float(sorted_likes[mid]) if sorted_likes else 0.0
+    mean_like = sum(likes_list) / max(len(likes_list), 1)
+    t_short = (topic or "").strip()[:20] or "主题"
+
+    formula_reference = [
+        "w_j = log(1 + max(like_proxy_j, 0))；每条样本只贡献给其 sop_tag / emotion_tag各一次。",
+        "标签 i 的加权和 W_i = sum_j w_j * 1{tag_j=i}；加权主标签 = argmax_i W_i；占比 = W_i* / sum_k W_k。",
+        "频次主标签 = argmax_i count_i（与加权结果对照，防止样本条数多但赞少时绑架结论）。",
+        "熵 H = -sum_i p_i log p_i（p_i 为标签频次占比），无量纲，越高表示标签越分散。",
+    ]
+
+    return {
+        "aggregation_kernel": "log1p_like_proxy",
+        "formula_reference": formula_reference,
+        "gene_agg_mode_applied": _xhs_gene_agg_mode(),
+        "viral_sop_weighted": viral_w,
+        "viral_sop_count_mode": viral_c,
+        "target_emotion_weighted": emo_win_w,
+        "target_emotion_count_mode": emo_win_c,
+        "weighted_share_viral_sop": share_sop,
+        "weighted_share_target_emotion": share_emo,
+        "entropy_sop_tags": _entropy_from_counts(sop_c),
+        "entropy_emotion_tags": _entropy_from_counts(emo_c),
+        "engagement_summary": {
+            "mean_like_proxy": round(mean_like, 2),
+            "median_like_proxy": median_like,
+            "sum_like_proxy": int(sum(likes_list)),
+        },
+        "title_length_mean": round(sum(title_lens) / max(len(title_lens), 1), 2),
+        "top_samples_by_like": top_evidence,
+        "topic_slice_for_hook": t_short,
+    }
+
+
+def _deterministic_predict_score(
+    text: str,
+    gene_sop: Any,
+    case_library: list[dict[str, Any]],
+) -> tuple[float, float, str, dict[str, Any]]:
+    """
+    可解释、可复现的预测分（不调用大模型）。
+    在 [0.05, 0.95] 内对线性分截断；特征为长度、中文占比、案例库 SOP 命中、参考库均分、过短惩罚。
+    """
+    g = _norm_gene(gene_sop)
+    sop = g["viral_sop"]
+    lib = case_library if isinstance(case_library, list) and case_library else _default_case_library()
+    ref_scores = [float(x.get("avg_score", 0.6)) for x in lib if isinstance(x, dict)]
+    ref_mean = sum(ref_scores) / max(len(ref_scores), 1)
+    matches = sum(1 for x in lib if isinstance(x, dict) and str(x.get("viral_sop")) == sop)
+    L = len(text)
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", text))
+    cjk_r = cjk / max(L, 1)
+    L_n = min(1.0, L / 560.0)
+    m_n = matches / max(len(lib), 1)
+    short_pen = 1.0 if L < 48 else 0.0
+    miss_pen = 1.0 if matches == 0 else 0.0
+    raw = (
+        0.14
+        + 0.26 * L_n
+        + 0.22 * cjk_r
+        + 0.12 * m_n
+        + 0.22 * ref_mean
+        - 0.12 * short_pen
+        - 0.06 * miss_pen
+    )
+    no_cjk = not re.search(r"[\u4e00-\u9fff]", text)
+    if no_cjk:
+        raw *= 0.88
+    predicted = max(0.05, min(0.95, raw))
+    conf_raw = 0.38 + 0.28 * L_n + 0.18 * m_n + 0.08 * max(0.0, 1.0 - abs(0.65 - ref_mean))
+    confidence = max(0.35, min(0.9, conf_raw))
+    if no_cjk:
+        risk = "no_cjk_body"
+    elif L < 48:
+        risk = "length_short"
+    elif matches == 0:
+        risk = "sop_mismatch_low"
+    else:
+        risk = "low_risk_heuristic"
+    breakdown = {
+        "model": "linear_clamp_v1",
+        "formula": (
+            "clip(0.14 + 0.26*L_norm + 0.22*cjk_ratio + 0.12*m_norm + 0.22*ref_mean "
+            "- 0.12*I(len<48) - 0.06*I(sop_no_lib_match), 0.05, 0.95); multiply by 0.88 if no CJK. "
+            "L_norm=min(1,len/560); m_norm=matches/len(case_library)."
+        ),
+        "L": L,
+        "L_norm": round(L_n, 4),
+        "cjk_ratio": round(cjk_r, 4),
+        "case_sop_match_count": matches,
+        "case_sop_match_norm": round(m_n, 4),
+        "reference_mean": round(ref_mean, 4),
+        "raw_before_clip": round(raw, 4),
+        "penalties": {"short_text": bool(short_pen), "sop_miss": bool(miss_pen), "no_cjk": bool(no_cjk)},
+    }
+    return round(predicted, 4), round(confidence, 4), risk, breakdown
+
+
 def extract_viral_patterns(topic: str, sample_size: int = 12) -> dict[str, Any]:
-    """【挖掘】从话题下样本归纳爆款基因（模拟）。"""
+    """【挖掘】从话题下样本做可量化聚合，再可选调用大模型补充 formulas。"""
     t = (topic or "").strip()[:120]
     n = max(3, min(48, int(sample_size)))
     samples = _fetch(t, n)
-    sop_counts: dict[str, int] = {}
-    emo_counts: dict[str, int] = {}
-    like_sum = 0
-    for s in samples:
-        sop_counts[s.get("sop_tag") or "对照式"] = sop_counts.get(s.get("sop_tag") or "对照式", 0) + 1
-        emo_counts[s.get("emotion_tag") or "共鸣"] = emo_counts.get(s.get("emotion_tag") or "共鸣", 0) + 1
-        try:
-            like_sum += int(s.get("like_proxy") or 0)
-        except (TypeError, ValueError):
-            pass
-    viral_sop = max(sop_counts, key=lambda k: sop_counts[k])
-    target_emotion = max(emo_counts, key=lambda k: emo_counts[k])
-    core_hook = f"用「{viral_sop}」承接「{target_emotion}」，前3秒抛出与「{t[:20] or '主题'}」强相关的反差信息"
+    quant = _quantitative_sample_analysis(samples, t)
+    mode = _xhs_gene_agg_mode()
+    if mode == "count":
+        viral_sop = quant["viral_sop_count_mode"]
+        target_emotion = quant["target_emotion_count_mode"]
+    else:
+        viral_sop = quant["viral_sop_weighted"]
+        target_emotion = quant["target_emotion_weighted"]
+    like_sum = int(quant["engagement_summary"]["sum_like_proxy"])
+    share_s = quant["weighted_share_viral_sop"]
+    share_e = quant["weighted_share_target_emotion"]
+    t_short = quant["topic_slice_for_hook"]
+    core_hook = (
+        f"用「{viral_sop}」承接「{target_emotion}」：样本中加权和占比约 {share_s:.0%}/{share_e:.0%}（{mode}），"
+        f"前 3 秒用与「{t_short}」强相关的反差信息留人。"
+    )[:200]
     out: dict[str, Any] = {
         "topic": t,
         "sample_size_requested": n,
@@ -112,13 +452,17 @@ def extract_viral_patterns(topic: str, sample_size: int = 12) -> dict[str, Any]:
         "core_hook": core_hook,
         "target_emotion": target_emotion,
         "aggregate_like_proxy": like_sum,
-        "notes": "mock extract_viral_patterns — replace _fetch for real feeds",
+        "quantitative": quant,
+        "notes": "stats-first extract_viral_patterns (log1p-weighted tags + entropy; optional LLM for formulas only)",
     }
-    if _factory_use_minimax():
-        slim = [
-            {k: s.get(k) for k in ("title_hint", "like_proxy", "sop_tag", "emotion_tag") if k in s}
-            for s in samples[:16]
-        ]
+    if _extract_use_llm():
+        slim = []
+        for s in samples[:16]:
+            row = {k: s.get(k) for k in ("title_hint", "body_hint", "like_proxy", "sop_tag", "emotion_tag") if k in s}
+            bh = row.get("body_hint")
+            if isinstance(bh, str) and len(bh) > 200:
+                row["body_hint"] = bh[:200] + "…"
+            slim.append(row)
         blob = json.dumps(slim, ensure_ascii=False)[:12000]
         pack = prompt_store.load_xhs_prompt("extract_viral_patterns")
         sys_p = str(pack.get("system") or "").strip()
@@ -134,7 +478,8 @@ def extract_viral_patterns(topic: str, sample_size: int = 12) -> dict[str, Any]:
             formulas = parsed.get("formulas")
             if isinstance(formulas, list) and formulas:
                 out["formulas"] = formulas[:3]
-                f0 = formulas[0] if isinstance(formulas[0], dict) else {}
+            if _extract_llm_overrides_gene():
+                f0 = formulas[0] if isinstance(formulas, list) and formulas and isinstance(formulas[0], dict) else {}
                 if isinstance(f0, dict):
                     hl = str(f0.get("hook_logic") or "").strip()
                     ss = str(f0.get("structure_sop") or "").strip()
@@ -149,27 +494,27 @@ def extract_viral_patterns(topic: str, sample_size: int = 12) -> dict[str, Any]:
                             out["core_hook"] = merged[:200]
                     if len(str(parsed.get("target_emotion") or "").strip()) < 2:
                         out["target_emotion"] = (et[:32] if et else "共鸣")[:32]
-            vs = str(parsed.get("viral_sop") or out.get("viral_sop") or "").strip()
-            ch = str(parsed.get("core_hook") or out.get("core_hook") or "").strip()
-            te = str(parsed.get("target_emotion") or out.get("target_emotion") or "").strip()
-            if len(vs) >= 2:
-                out["viral_sop"] = vs[:32]
-            if len(ch) >= 4:
-                out["core_hook"] = ch[:200]
-            if len(te) >= 2:
-                out["target_emotion"] = te[:32]
-            if len(str(out.get("core_hook") or "").strip()) < 4:
-                out["core_hook"] = (
-                    f"用「{out.get('viral_sop') or '对照式'}」承接「{out.get('target_emotion') or '共鸣'}」，"
-                    f"前3秒抛出与「{t[:20] or '主题'}」强相关的反差信息"
-                )[:200]
-            if len(str(out.get("viral_sop") or "").strip()) < 2:
-                out["viral_sop"] = "对照式"
-            if len(str(out.get("target_emotion") or "").strip()) < 2:
-                out["target_emotion"] = "共鸣"
-            out["notes"] = "minimax extract_viral_patterns (+ mock sample stats)"
+                vs = str(parsed.get("viral_sop") or out.get("viral_sop") or "").strip()
+                ch = str(parsed.get("core_hook") or out.get("core_hook") or "").strip()
+                te = str(parsed.get("target_emotion") or out.get("target_emotion") or "").strip()
+                if len(vs) >= 2:
+                    out["viral_sop"] = vs[:32]
+                if len(ch) >= 4:
+                    out["core_hook"] = ch[:200]
+                if len(te) >= 2:
+                    out["target_emotion"] = te[:32]
+                if len(str(out.get("core_hook") or "").strip()) < 4:
+                    out["core_hook"] = (
+                        f"用「{out.get('viral_sop') or '对照式'}」承接「{out.get('target_emotion') or '共鸣'}」，"
+                        f"前3秒抛出与「{t_short}」强相关的反差信息"
+                    )[:200]
+                if len(str(out.get("viral_sop") or "").strip()) < 2:
+                    out["viral_sop"] = "对照式"
+                if len(str(out.get("target_emotion") or "").strip()) < 2:
+                    out["target_emotion"] = "共鸣"
+            out["notes"] = out["notes"] + " | llm: formulas" + (" + gene_override" if _extract_llm_overrides_gene() else "")
         else:
-            out["notes"] = (out["notes"] or "") + " | minimax: no parseable json"
+            out["notes"] = (out["notes"] or "") + " | llm: no parseable json"
     return out
 
 
@@ -256,59 +601,50 @@ def predict_viral_score(
     gene_sop: Any,
     case_library: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """【预测】对照案例库特征给二创打分（模拟）。"""
+    """【预测】默认可复现的线性启发式；仅当 XHS_FACTORY_PREDICT_USE_LLM=1 时才用 MiniMax 覆盖分数。"""
     text = (recreated_text or "").strip()
     g = _norm_gene(gene_sop)
     lib = case_library if isinstance(case_library, list) and case_library else _default_case_library()
     ref_scores = [float(x.get("avg_score", 0.6)) for x in lib if isinstance(x, dict)]
     ref_mean = sum(ref_scores) / max(len(ref_scores), 1)
-    sop = g["viral_sop"]
-    matches = sum(1 for x in lib if isinstance(x, dict) and str(x.get("viral_sop")) == sop)
-    base = 0.42 + 0.12 * min(matches, 3) + 0.08 * (1.0 if len(text) > 80 else 0.0)
-    h = int(hashlib.md5(text.encode("utf-8")).hexdigest()[:6], 16) / 0xFFFFFF
-    jitter = (h - 0.5) * 0.08
-    predicted = max(0.05, min(0.95, base + 0.15 * ref_mean + jitter))
-    confidence = max(0.35, min(0.92, 0.55 + 0.25 * (len(text) / 500.0)))
-    risk = "length_short" if len(text) < 40 else "sop_mismatch_low" if matches == 0 else "mock_low_risk"
-    if not re.search(r"[\u4e00-\u9fff]", text):
-        risk = "no_cjk_body"
-        predicted *= 0.85
-    notes = "mock predict_viral_score — wire real model or platform signals"
-    if _factory_use_minimax():
-        pack = prompt_store.load_xhs_prompt("predict_viral_score")
-        sys_p = str(pack.get("system") or "").strip()
-        lim = pack.get("limits") if isinstance(pack.get("limits"), dict) else {}
+    predicted, confidence, risk, breakdown = _deterministic_predict_score(text, gene_sop, lib)
+    notes = "deterministic predict_viral_score (linear_clamp_v1; see score_breakdown)"
+    out: dict[str, Any] = {
+        "predicted_score": predicted,
+        "confidence": confidence,
+        "risk_factor": risk,
+        "reference_mean": round(ref_mean, 4),
+        "case_library_size": len(lib),
+        "score_breakdown": breakdown,
+        "notes": notes,
+    }
+    if not _predict_use_llm():
+        return out
+    pack = prompt_store.load_xhs_prompt("predict_viral_score")
+    sys_p = str(pack.get("system") or "").strip()
+    lim = pack.get("limits") if isinstance(pack.get("limits"), dict) else {}
+    try:
+        tmax = int(lim.get("recreated_text_max_chars", 6000))
+    except (TypeError, ValueError):
+        tmax = 6000
+    try:
+        lib_n = int(lim.get("case_library_max_items", 20))
+    except (TypeError, ValueError):
+        lib_n = 20
+    tmax = max(500, min(32000, tmax))
+    lib_n = max(1, min(50, lib_n))
+    user_tpl = str(pack.get("user_template") or "").strip()
+    gene_json = json.dumps(g, ensure_ascii=False)
+    case_blob = json.dumps(lib[:lib_n], ensure_ascii=False)[:12000]
+    if user_tpl:
         try:
-            tmax = int(lim.get("recreated_text_max_chars", 6000))
-        except (TypeError, ValueError):
-            tmax = 6000
-        try:
-            lib_n = int(lim.get("case_library_max_items", 20))
-        except (TypeError, ValueError):
-            lib_n = 20
-        tmax = max(500, min(32000, tmax))
-        lib_n = max(1, min(50, lib_n))
-        user_tpl = str(pack.get("user_template") or "").strip()
-        gene_json = json.dumps(g, ensure_ascii=False)
-        case_blob = json.dumps(lib[:lib_n], ensure_ascii=False)[:12000]
-        if user_tpl:
-            try:
-                user_p = prompt_store.substitute_user_template(
-                    user_tpl,
-                    recreated_blob=text[:tmax],
-                    gene_json=gene_json,
-                    case_blob=case_blob,
-                )
-            except (KeyError, ValueError):
-                user_p = json.dumps(
-                    {
-                        "recreated_text": text[:tmax],
-                        "gene_sop": g,
-                        "case_library": lib[:lib_n],
-                    },
-                    ensure_ascii=False,
-                )
-        else:
+            user_p = prompt_store.substitute_user_template(
+                user_tpl,
+                recreated_blob=text[:tmax],
+                gene_json=gene_json,
+                case_blob=case_blob,
+            )
+        except (KeyError, ValueError):
             user_p = json.dumps(
                 {
                     "recreated_text": text[:tmax],
@@ -317,36 +653,35 @@ def predict_viral_score(
                 },
                 ensure_ascii=False,
             )
-        parsed = minimax_client.MiniMaxClient().complete_json(sys_p, user_p)
-        if parsed:
-            try:
-                ps = float(parsed.get("predicted_score"))
-                cf = float(parsed.get("confidence"))
-                if ps > 1.0:
-                    ps = min(1.0, ps / 100.0)
-                ar = str(parsed.get("audit_reason") or "").strip()
-                rf0 = str(parsed.get("risk_factor") or risk).strip()
-                rf = f"{ar} | {rf0}" if ar else rf0
-                rf = rf[:240]
-                if 0.0 <= ps <= 1.0 and 0.0 <= cf <= 1.0:
-                    return {
-                        "predicted_score": round(ps, 4),
-                        "confidence": round(cf, 4),
-                        "risk_factor": rf,
-                        "reference_mean": round(ref_mean, 4),
-                        "case_library_size": len(lib),
-                        "notes": "minimax predict_viral_score",
-                    }
-                notes = notes + " | minimax: scores out of range"
-            except (TypeError, ValueError):
-                notes = notes + " | minimax: invalid numeric fields"
-        else:
-            notes = notes + " | minimax: no parseable json"
-    return {
-        "predicted_score": round(predicted, 4),
-        "confidence": round(confidence, 4),
-        "risk_factor": risk,
-        "reference_mean": round(ref_mean, 4),
-        "case_library_size": len(lib),
-        "notes": notes,
-    }
+    else:
+        user_p = json.dumps(
+            {
+                "recreated_text": text[:tmax],
+                "gene_sop": g,
+                "case_library": lib[:lib_n],
+            },
+            ensure_ascii=False,
+        )
+    parsed = minimax_client.MiniMaxClient().complete_json(sys_p, user_p)
+    if parsed:
+        try:
+            ps = float(parsed.get("predicted_score"))
+            cf = float(parsed.get("confidence"))
+            if ps > 1.0:
+                ps = min(1.0, ps / 100.0)
+            ar = str(parsed.get("audit_reason") or "").strip()
+            rf0 = str(parsed.get("risk_factor") or risk).strip()
+            rf = f"{ar} | {rf0}" if ar else rf0
+            rf = rf[:240]
+            if 0.0 <= ps <= 1.0 and 0.0 <= cf <= 1.0:
+                out["predicted_score"] = round(ps, 4)
+                out["confidence"] = round(cf, 4)
+                out["risk_factor"] = rf
+                out["notes"] = "minimax predict_viral_score (overrides score; deterministic kept in score_breakdown)"
+                return out
+            out["notes"] = notes + " | minimax: scores out of range"
+        except (TypeError, ValueError):
+            out["notes"] = notes + " | minimax: invalid numeric fields"
+    else:
+        out["notes"] = notes + " | minimax: no parseable json"
+    return out

@@ -1,0 +1,10 @@
+{
+  "files.encoding": "utf8",
+  "files.autoGuessEncoding": true,
+  "[powershell]": {
+    "files.encoding": "utf8bom"
+  },
+  "[plaintext]": {
+    "files.encoding": "utf8"
+  }
+}

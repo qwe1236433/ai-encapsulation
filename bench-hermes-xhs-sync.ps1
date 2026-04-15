@@ -2,19 +2,40 @@
 # Each successful run also writes a UTF-8 .txt under outputs\xhs-runs\ and appends to outputs\xhs-articles-log.txt
 # Usage: .\bench-hermes-xhs-sync.ps1
 #        .\bench-hermes-xhs-sync.ps1 -Goal "your goal" -MaxAttempts 6
+#        .\bench-hermes-xhs-sync.ps1 -GoalPath ".\scripts\bench-goal-example.txt"
 #        .\bench-hermes-xhs-sync.ps1 -NoExport   # only print JSON, no txt files
 
 param(
     [string] $BaseUrl = "http://127.0.0.1:8080",
     [string] $Goal = "XHS note: side hustle review, viral title and body structure",
+    [string] $GoalPath = "",
     [int] $MaxAttempts = 6,
     [switch] $NoExport
 )
 
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+if ($GoalPath -and $GoalPath.Trim()) {
+    $gp = $GoalPath.Trim()
+    if (-not (Test-Path -LiteralPath $gp)) {
+        Write-Host "GoalPath not found: $gp" -ForegroundColor Red
+        exit 1
+    }
+    $Goal = [System.IO.File]::ReadAllText($gp, [System.Text.UTF8Encoding]::new($false)).Trim()
+}
+# Hermes 仅在 goal 含「小红书 / xhs」等时才走 XHS 工厂链（extract→…→prepare_xhs_post）。
+# 本脚本专用于小红书 bench；若用户只写主题未带平台词，会误走 predict_traffic 等通用算子，导出里只有 mock 流量、无正文。
+$gNorm = $Goal.Trim()
+if ($gNorm.Length -gt 0) {
+    $gl = $gNorm.ToLowerInvariant()
+    $hasXhs = ($gNorm.Contains('小红书')) -or ($gNorm.Contains('小红薯')) -or ($gl.Contains('xhs'))
+    if (-not $hasXhs) {
+        $Goal = '小红书：' + $gNorm
+    }
+}
 $uri = $BaseUrl.TrimEnd('/') + '/task/sync'
 $payload = @{ goal = $Goal; max_attempts = $MaxAttempts } | ConvertTo-Json -Compress
 $ctype = 'application/json; charset=utf-8'
+. (Join-Path $here 'utf8-http.ps1')
 
 function Get-XhsArticleFromResponse {
     param($resp)
@@ -51,7 +72,8 @@ function Export-XhsRunToTxt {
     param(
         [object] $resp,
         [string] $rootDir,
-        [string] $hermesBase    )
+        [string] $hermesBase
+ )
     $outRuns = Join-Path $rootDir 'outputs\xhs-runs'
     $master = Join-Path $rootDir 'outputs\xhs-articles-log.txt'
     if (-not (Test-Path -LiteralPath $outRuns)) {
@@ -71,12 +93,12 @@ function Export-XhsRunToTxt {
 
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('========== XHS factory export ==========')
-    [void]$sb.AppendLine(('时间: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')))
-    [void]$sb.AppendLine(('任务ID(task_id): ' + $tid))
-    [void]$sb.AppendLine(('目标(goal): ' + $goal))
+    [void]$sb.AppendLine(('Time: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')))
+    [void]$sb.AppendLine(('task_id: ' + $tid))
+    [void]$sb.AppendLine(('goal: ' + $goal))
     [void]$sb.AppendLine(('final_status: ' + $fs))
     [void]$sb.AppendLine(('lifecycle_phase: ' + $lp))
-    [void]$sb.AppendLine(('查询完整JSON: GET ' + $poll))
+    [void]$sb.AppendLine(('Poll full JSON: GET ' + $poll))
     [void]$sb.AppendLine('')
 
     if ($art) {
@@ -85,26 +107,26 @@ function Export-XhsRunToTxt {
         $ip = [string]$art.image_prompt
         $nt = [string]$art.notes
         $ht = Format-HashtagsLine $art.hashtags
-        [void]$sb.AppendLine('【标题 headline】')
+        [void]$sb.AppendLine('[headline]')
         [void]$sb.AppendLine($hl)
         [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('【正文 body】')
+        [void]$sb.AppendLine('[body]')
         [void]$sb.AppendLine($bd)
         [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('【话题标签 hashtags】')
+        [void]$sb.AppendLine('[hashtags]')
         [void]$sb.AppendLine($ht)
         [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('【配图描述 image_prompt】')
+        [void]$sb.AppendLine('[image_prompt]')
         [void]$sb.AppendLine($ip)
         [void]$sb.AppendLine('')
         if ($nt) {
-            [void]$sb.AppendLine('【备注 notes】')
+            [void]$sb.AppendLine('[notes]')
             [void]$sb.AppendLine($nt)
             [void]$sb.AppendLine('')
         }
     }
     else {
-        [void]$sb.AppendLine('（未找到 prepare_xhs_post 结果：可能停在中间步骤，请用上方 GET 地址查看完整 JSON。）')
+        [void]$sb.AppendLine('(No prepare_xhs_post result; poll GET URL above for full JSON.)')
         [void]$sb.AppendLine('')
     }
     [void]$sb.AppendLine('========== end ==========')
@@ -122,7 +144,8 @@ Write-Host "POST $uri" -ForegroundColor Cyan
 Write-Host "goal=$Goal max_attempts=$MaxAttempts" -ForegroundColor Gray
 
 try {
-    $r = Invoke-RestMethod -Uri $uri -Method Post -Body $payload -ContentType $ctype -TimeoutSec 600
+    $jsonText = Invoke-HttpUtf8 -Method Post -Uri $uri -JsonBody $payload -TimeoutSec 600
+    $r = $jsonText | ConvertFrom-Json
     $r | ConvertTo-Json -Depth 12
     if (-not $NoExport) {
         Export-XhsRunToTxt -resp $r -rootDir $here -hermesBase $BaseUrl
@@ -130,9 +153,5 @@ try {
 }
 catch {
     Write-Host $_ -ForegroundColor Red
-    if ($_.Exception.Response) {
-        $reader = [System.IO.StreamReader]::new($_.Exception.Response.GetResponseStream())
-        Write-Host $reader.ReadToEnd() -ForegroundColor Yellow
-    }
     exit 1
 }

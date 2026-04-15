@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from typing import Any
 
 import settings
@@ -22,16 +24,59 @@ def mock_engagement_bundle(text: str) -> dict[str, Any]:
     return out
 
 
+def _traffic_quality_tier(text: str) -> int:
+    """与 openclaw/main.py 同逻辑，须同步维护。"""
+    raw = (os.environ.get("TRAFFIC_SIM_QUALITY_ENABLED") or "1").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return 0
+    t = text or ""
+    if len(t) < 40:
+        return 0
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
+    if cjk < 8:
+        return 0
+    has_digit = bool(re.search(r"\d", t))
+    has_list = bool(re.search(r"[·•①②③④⑤⑥⑦⑧⑨]|\n\s*\d+\s*[\.、．]", t))
+    if has_digit and has_list:
+        return 2
+    if has_digit or has_list:
+        return 1
+    return 0
+
+
+def _likes_quality_strong() -> int:
+    try:
+        return max(0, int(os.environ.get("TRAFFIC_SIM_LIKES_QUALITY") or "400"))
+    except ValueError:
+        return 400
+
+
 def simulate_traffic_for_text(text: str) -> dict[str, Any]:
     """与 OpenClaw `simulate_traffic_for_text` 同规则（环境变量同名）。"""
     kw = settings.traffic_boost_keyword()
     hit = kw in (text or "")
-    likes = settings.traffic_likes_if_hit() if hit else settings.traffic_likes_else()
+    tier = _traffic_quality_tier(text)
+    likes_else = settings.traffic_likes_else()
+    likes_hit = settings.traffic_likes_if_hit()
+    likes_q = _likes_quality_strong()
+    if hit:
+        likes = likes_hit
+        rule = f"boost_kw '{kw}' -> {likes_hit}"
+    elif tier >= 2:
+        likes = max(likes_else, likes_q)
+        rule = f"quality_strong tier={tier} -> {likes}"
+    elif tier == 1:
+        likes = max(likes_else, int((likes_else + likes_q) / 2))
+        rule = f"quality_weak tier={tier} -> {likes}"
+    else:
+        likes = likes_else
+        rule = f"baseline -> {likes_else}"
     return {
         "predicted_likes": likes,
         "boost_keyword": kw,
         "boost_keyword_hit": hit,
-        "rule": f"contains '{kw}' -> {settings.traffic_likes_if_hit()} else {settings.traffic_likes_else()}",
+        "quality_tier": tier,
+        "rule": rule,
     }
 
 

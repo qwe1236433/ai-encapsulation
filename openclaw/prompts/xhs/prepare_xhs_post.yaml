@@ -1,21 +1,22 @@
-# 小红书工厂 — prepare_xhs_post（本地模板；占位符 {name} 由 main.py str.format 填充）
-version: 2
+# 小红书工厂 — prepare_xhs_post（本地模板；{name} 由 main.py str.format）
+# body_when_short：低保「成品笔记」骨架，禁止出现「开头共鸣/几条要点」等元指令句
+version: 3
 
 headline_when_short:
   template_a: "{topic}·{tone}视角"
   template_b: "{kw}·{topic}"
-  # 标题钩子（topic_16 为 topic 前 16 字；代码按 hash 择一，均失败再回退 a/b）
   hook_contrast: "以为{topic_16}很难？我亲测完这几步反而开窍了…"
   hook_number: "关于{topic_16}，我按这 3 件事重做了一遍"
   hook_warn: "{topic_16}先别盲冲！我帮你排掉最坑的一种"
 
 body_when_short: |-
-  最近老刷到{topic_16}相关的内容，我也踩过坑。
-  把我自己的判断标准摊开来（无广，纯经历）：
-  · 时间：每天能挤出多少
-  · 成本：试错要掏多少
-  · 反馈：多久能看到一点结果
-  你卡在哪一步？评论区聊聊，{kw} 相关我看到就回～
+  救命！最近在琢磨「{topic_16}」真的上头，把自己踩过的坑捋成 3 条，建议先收藏再看。
+
+  1️⃣ 别急着 all in：先算你每天能稳拿出的 1 小时
+  2️⃣ 别被晒单带跑：问清楚多久能看到正反馈、试错成本多少
+  3️⃣ 先做最小闭环：跑通一步再放大
+
+  我这边和「{kw}」纠缠过一段时间，评论区说说你卡在哪，我尽量回～
 
 image_prompt: "小红书竖版封面 1080x1440，主标题「{headline_24}」，风格偏{tone}，留白清晰、对比强。"
 

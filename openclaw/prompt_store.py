@@ -7,8 +7,8 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
-from string import Template
 from typing import Any
 
 import yaml
@@ -39,5 +39,14 @@ def load_xhs_prompt(name: str) -> dict[str, Any]:
 
 
 def substitute_user_template(template: str, **kwargs: str) -> str:
-    """user侧模板使用 $topic 形式，避免 JSON 样本里的 { 与 str.format 冲突。"""
-    return Template(template).substitute(**kwargs)
+    """user侧模板使用 $name占位符；用正则替换，避免 string.Template 对 $ 敏感及未知键抛错。"""
+    if not template:
+        return ""
+
+    def repl(m: re.Match) -> str:
+        key = m.group(1)
+        if key in kwargs:
+            return str(kwargs[key])
+        return m.group(0)
+
+    return re.sub(r"\$(\w+)", repl, template)

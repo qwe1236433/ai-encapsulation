@@ -10,22 +10,21 @@ param(
     [string] $BaseUrl = "http://127.0.0.1:8080"
 )
 
+$root = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+. (Join-Path $root 'utf8-http.ps1')
+
 $uri = $BaseUrl.TrimEnd('/') + '/task/' + $TaskId.Trim() + '/xhs-sync'
 $o = @{ real_note_id = $RealNoteId.Trim() } | ConvertTo-Json -Compress
-$ctype = 'application/json; charset=utf-8'
 
 Write-Host "POST $uri" -ForegroundColor Cyan
 Write-Host "real_note_id=$RealNoteId" -ForegroundColor Gray
 
 try {
-    $r = Invoke-RestMethod -Uri $uri -Method Post -Body $o -ContentType $ctype -TimeoutSec 600
+    $jsonText = Invoke-HttpUtf8 -Method Post -Uri $uri -JsonBody $o -TimeoutSec 600
+    $r = $jsonText | ConvertFrom-Json
     $r | ConvertTo-Json -Depth 14
 }
 catch {
     Write-Host $_ -ForegroundColor Red
-    if ($_.Exception.Response) {
-        $reader = [System.IO.StreamReader]::new($_.Exception.Response.GetResponseStream())
-        Write-Host $reader.ReadToEnd() -ForegroundColor Yellow
-    }
     exit 1
 }

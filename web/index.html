@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>小红书工厂 · 本地流程</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #5b9fd4;
+      --ok: #3d9e6e;
+      --warn: #c9a227;
+      --border: #2a3545;
+      --err: #d96b6b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      min-height: 100vh;
+    }
+    .wrap { max-width: 800px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+    h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 0.35rem; }
+    .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.25rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.1rem 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin: 0 0 0.75rem;
+      font-weight: 600;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .links { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
+    .links a {
+      display: inline-block;
+      padding: 0.35rem 0.65rem;
+      background: rgba(91, 159, 212, 0.12);
+      border-radius: 6px;
+      border: 1px solid rgba(91, 159, 212, 0.35);
+    }
+    .links a:hover { background: rgba(91, 159, 212, 0.22); text-decoration: none; }
+    code, .mono {
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: 0.82rem;
+      background: rgba(0,0,0,0.25);
+      padding: 0.12rem 0.35rem;
+      border-radius: 4px;
+    }
+    .note {
+      font-size: 0.88rem;
+      color: var(--muted);
+      border-left: 3px solid var(--accent);
+      padding-left: 0.85rem;
+      margin-top: 0.75rem;
+    }
+    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
+    button {
+      background: rgba(91, 159, 212, 0.2);
+      border: 1px solid rgba(91, 159, 212, 0.5);
+      color: var(--text);
+      padding: 0.45rem 0.85rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.88rem;
+    }
+    button:hover { background: rgba(91, 159, 212, 0.35); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.primary {
+      background: linear-gradient(180deg, rgba(61, 158, 110, 0.4), rgba(61, 158, 110, 0.22));
+      border-color: rgba(61, 158, 110, 0.7);
+      font-size: 1.05rem;
+      padding: 0.65rem 1.35rem;
+      font-weight: 600;
+    }
+    button.primary:hover { background: linear-gradient(180deg, rgba(61, 158, 110, 0.55), rgba(61, 158, 110, 0.32)); }
+    button.secondary {
+      background: rgba(255,255,255,0.06);
+      border-color: var(--border);
+    }
+    details.advanced { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 0.85rem; }
+    details.advanced summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 0.88rem;
+      user-select: none;
+    }
+    details.advanced summary:hover { color: var(--text); }
+    #pipeline-stage { color: var(--warn); font-size: 0.9rem; min-height: 1.35em; }
+    #pipeline-stage.done { color: var(--ok); }
+    .chk-row label { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.88rem; cursor: pointer; }
+    .chk-row input { width: auto; min-width: auto; }
+    input[type="text"], input[type="number"] {
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.35rem 0.5rem;
+      border-radius: 6px;
+      min-width: 220px;
+    }
+    .status-line { font-size: 0.9rem; margin: 0.35rem 0; }
+    .status-line.all-ok { color: var(--ok); }
+    .status-line.partial { color: var(--warn); }
+    #msg { color: var(--err); min-height: 1.2em; font-size: 0.88rem; margin: 0.5rem 0; }
+    #config-paths { font-size: 0.85rem; color: var(--muted); }
+    #config-paths .k { display: inline-block; min-width: 5.5rem; color: var(--muted); }
+    #job-log, #latest-preview {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 0.78rem;
+      background: rgba(0,0,0,0.3);
+      border-radius: 8px;
+      padding: 0.75rem;
+      max-height: 280px;
+      overflow: auto;
+      margin-top: 0.5rem;
+      border: 1px solid var(--border);
+    }
+    #latest-preview { max-height: 420px; }
+    .block-label {
+      display: block;
+      font-size: 0.88rem;
+      margin-bottom: 0.35rem;
+      color: var(--muted);
+    }
+    textarea#input-goal-text {
+      width: 100%;
+      min-height: 6.5rem;
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.5rem 0.65rem;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 0.9rem;
+      line-height: 1.5;
+      resize: vertical;
+    }
+    textarea#input-goal-text::placeholder { color: var(--muted); opacity: 0.85; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>小红书工厂 · 本地流程</h1>
+    <p class="sub">本页由 <span class="mono">api/</span> 提供接口：可检查服务、合并爬取、Docker 启动、跑 Bench、预览最新导出。爬取数据用于提炼规律；<strong>goal</strong> 即你<strong>本次想发的主题和要求</strong>，每次生成都可以不一样。</p>
+
+    <div class="card">
+      <h2>服务入口</h2>
+      <div class="links">
+        <a id="link-hermes" href="http://127.0.0.1:8080/" target="_blank" rel="noopener">Hermes · 8080</a>
+        <a id="link-openclaw" href="http://127.0.0.1:3000/" target="_blank" rel="noopener">OpenClaw · 3000</a>
+      </div>
+      <div class="row">
+        <button type="button" class="secondary" id="btn-refresh">刷新状态与路径</button>
+      </div>
+      <div id="health-status" class="status-line">加载中…</div>
+      <div id="config-paths"></div>
+    </div>
+
+    <div class="card">
+      <h2>一键生成</h2>
+      <p class="note" style="margin-top:0">点下面绿色按钮后，会自动执行：<strong>合并爬取数据</strong> → <strong>启动 Docker</strong> → <strong>按你的主题生成正文</strong>（全程约几分钟）。请先打开 <strong>Docker Desktop</strong>；若已手动维护好 <span class="mono">samples.json</span>，可勾选「跳过合并」。</p>
+      <label class="block-label" for="input-goal-text">本次主题与写作要求（可直接口语描述，每次可不同）</label>
+      <textarea id="input-goal-text" placeholder="例如：写一篇小红书笔记，分享「久坐族颈椎自救」，语气像朋友聊天，要有 3 条立刻能用的动作，结尾引导收藏…"></textarea>
+      <p class="note">会<strong>优先使用</strong>上面框里的文字。若上面留空，才使用下方「写作要求文件」路径（或系统默认示例文件）。</p>
+      <div class="row chk-row">
+        <label><input type="checkbox" id="chk-skip-export" /> 跳过合并（使用现有 Feed）</label>
+      </div>
+      <div class="row">
+        <label>写作要求文件（仅在上面为空时）<input type="text" id="input-goal" placeholder="scripts/bench-goal-example.txt" /></label>
+        <label>失败重试次数 <input type="number" id="input-max" value="6" min="1" max="20" style="min-width:4rem" /></label>
+      </div>
+      <div class="row">
+        <button type="button" class="primary" id="btn-full-pipeline">一键开始</button>
+      </div>
+      <div id="pipeline-stage"></div>
+      <div id="msg"></div>
+      <div id="job-log"></div>
+      <details class="advanced">
+        <summary>高级：分步执行（调试用）</summary>
+        <p class="note" style="margin-top:0.75rem">与上面一键流程相同，仅拆成三步，便于排查哪一步出错。</p>
+        <div class="row">
+          <button type="button" id="btn-export">1. 仅合并 Feed</button>
+          <button type="button" id="btn-docker">2. 仅 Docker up</button>
+        </div>
+        <div class="row">
+          <button type="button" id="btn-bench">3. 仅跑 Bench</button>
+        </div>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>最新导出 TXT</h2>
+      <div class="row">
+        <button type="button" class="secondary" id="btn-latest">刷新预览</button>
+      </div>
+      <div id="latest-preview"></div>
+    </div>
+
+    <div class="card">
+      <h2>说明文档</h2>
+      <ul>
+        <li><span class="mono">使用说明书.md</span> — 含 <span class="mono">api/</span> 启动方式</li>
+        <li><span class="mono">MediaCrawler联调步骤.md</span></li>
+        <li><span class="mono">新手请看-工厂和爬虫怎么配合.md</span></li>
+      </ul>
+    </div>
+  </div>
+  <script src="/app.js"></script>
+  <script>
+    (function () {
+      fetch("/api/config")
+        .then((r) => r.json())
+        .then(function (c) {
+          if (c.hermes_url) document.getElementById("link-hermes").href = c.hermes_url + "/";
+          if (c.openclaw_url) document.getElementById("link-openclaw").href = c.openclaw_url + "/";
+        })
+        .catch(function () {});
+    })();
+  </script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-﻿# 将当前仓库变更拉取、提交并推送到 origin（供计划任务每 N 分钟调用）。
+# 将当前仓库变更拉取、提交并推送到 origin（供计划任务每 N 分钟调用）。
 # 默认尽量「全量」同步：除 .gitignore 中密钥/会话等项外，对 bench 输出等历史被 ignore 的路径用 git add -f 纳入。
 # 仍不会提交：.env、.local/、hermes/sessions/、openclaw/data/（见 .gitignore）。
 #
@@ -105,7 +105,9 @@ try {
             "outputs/xhs-articles-log.txt",
             "reports",
             "bench-last-run.json",
-            "last-task-sync.json"
+            "last-task-sync.json",
+            "auto-push-hourly.ps1",
+            "install-hourly-push-task.ps1"
         )
         foreach ($rel in $forceRelPaths) {
             $abs = Join-Path $RepoPath $rel

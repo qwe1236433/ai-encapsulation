@@ -9,7 +9,9 @@
 param(
     [string] $InPath = "",
     [string] $OutPath = "",
-    [string] $Dedupe = ""
+    [string] $Dedupe = "",
+    [string] $DigestOut = "",
+    [string] $BatchId = ""
 )
 
 $root = Split-Path $PSScriptRoot -Parent
@@ -70,6 +72,32 @@ if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
     New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 }
 
+$digestVal = $DigestOut.Trim()
+if (-not $digestVal) {
+    $digestVal = [Environment]::GetEnvironmentVariable("FLOW_API_FEED_DIGEST_OUT", "Process")
+    if (-not $digestVal) { $digestVal = Get-DotEnvValue $envFile "FLOW_API_FEED_DIGEST_OUT" }
+    if (-not $digestVal) { $digestVal = "" }
+}
+
+$batchVal = $BatchId.Trim()
+if (-not $batchVal) {
+    $batchVal = [Environment]::GetEnvironmentVariable("FLOW_API_FEED_BATCH_ID", "Process")
+    if (-not $batchVal) { $batchVal = Get-DotEnvValue $envFile "FLOW_API_FEED_BATCH_ID" }
+    if (-not $batchVal) { $batchVal = "" }
+}
+
 Write-Host "Merge: $InPath -> $OutPath (dedupe=$dedupeVal)" -ForegroundColor Cyan
-python scripts\export_to_xhs_feed.py --in $InPath --out $OutPath --dedupe $dedupeVal
+$pyArgs = @(
+    "scripts\export_to_xhs_feed.py",
+    "--in", $InPath,
+    "--out", $OutPath,
+    "--dedupe", $dedupeVal
+)
+if ($digestVal) {
+    $pyArgs += @("--digest-out", $digestVal)
+}
+if ($batchVal) {
+    $pyArgs += @("--batch-id", $batchVal)
+}
+& python @pyArgs
 exit $LASTEXITCODE

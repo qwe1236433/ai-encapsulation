@@ -3,7 +3,7 @@
 
 - 挖掘：默认对样本做 **log1p(点赞)** 加权的标签聚合 + 频次众数对照 + 标签熵 + Top 证据列表（`quantitative`），
   大模型仅可选补充 `formulas`，不再默认覆盖主标签。
-- 预测：默认 **linear_clamp_v1** 可复现线性分 + `score_breakdown`；`XHS_FACTORY_PREDICT_USE_LLM=1` 时才用 MiniMax 覆盖分数。
+- 预测：默认 **linear_clamp_v1** 可复现线性分 + `score_breakdown`；可选读 **`XHS_FACTORY_BASELINE_JSON`**（`train_baseline_v0.py` 产出的系数 JSON）做 **baseline_lr_v0**（logistic，无 sklearn依赖），与线性分 **blend / replace**；`/process` 可传 **`like_proxy_hint` / `like_proxy`** 覆盖草稿场景的 assumed like（仅 baseline分支）。`XHS_FACTORY_PREDICT_USE_LLM=1` 时 MiniMax 仍可在最后覆盖 `predicted_score`。
 - 样本接入：改 `_fetch` 或环境变量 `XHS_FACTORY_*`。
 """
 
@@ -34,6 +34,128 @@ def _factory_use_minimax() -> bool:
 
 def _topic_file_slug(topic: str) -> str:
     return hashlib.sha256((topic or "").encode("utf-8")).hexdigest()[:16]
+
+
+_baseline_lr_cache: dict[str, Any] | None = None
+_baseline_lr_cache_key: tuple[str, float] | None = None
+
+
+def _baseline_assumed_like_proxy() -> int:
+    raw = (os.environ.get("XHS_FACTORY_BASELINE_ASSUMED_LIKE") or "100").strip()
+    try:
+        v = int(raw)
+    except ValueError:
+        v = 100
+    return max(1, v)
+
+
+def _recreated_text_to_title_body_lengths(text: str) -> tuple[int, int]:
+    """与 export_features_v0 对 title_hint/body_hint 长度统计方式对齐的启发式：首行作标题，其余作正文。"""
+    t = (text or "").strip()
+    if not t:
+        return 0, 0
+    if "\n" in t:
+        first, _, rest = t.partition("\n")
+        title_s = first.strip()[:500]
+        body_s = rest.strip()[:2000]
+    else:
+        title_s = ""
+        body_s = t.strip()[:2000]
+    if not title_s and not body_s:
+        return 0, 0
+    if not title_s:
+        title_s = body_s[:120]
+    if not body_s:
+        body_s = title_s
+    return len(title_s), len(body_s)
+
+
+def _load_baseline_lr_payload() -> dict[str, Any] | None:
+    """读取 research/artifacts/baseline_v0.json 类产物；缓存至文件 mtime 变化。"""
+    global _baseline_lr_cache, _baseline_lr_cache_key
+    path = (os.environ.get("XHS_FACTORY_BASELINE_JSON") or "").strip()
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    if _baseline_lr_cache is not None and _baseline_lr_cache_key == (path, mtime):
+        return _baseline_lr_cache
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("schema") != "feature_schema_v0":
+        return None
+    feats = data.get("feature_names")
+    coef = data.get("coefficients")
+    icept = data.get("intercept")
+    if not isinstance(feats, list) or not isinstance(coef, dict) or not isinstance(icept, (int, float)):
+        return None
+    for name in feats:
+        if name not in coef:
+            return None
+    _baseline_lr_cache = data
+    _baseline_lr_cache_key = (path, mtime)
+    return data
+
+
+def _baseline_lr_logistic_p(
+    payload: dict[str, Any],
+    text: str,
+    like_proxy_hint: int | None = None,
+) -> tuple[float, dict[str, Any]]:
+    feats: list[str] = list(payload["feature_names"])
+    coefs: dict[str, Any] = payload["coefficients"]
+    icept = float(payload["intercept"])
+    title_len, body_len = _recreated_text_to_title_body_lengths(text)
+    if like_proxy_hint is not None and int(like_proxy_hint) >= 1:
+        assumed = int(like_proxy_hint)
+        like_src = "request_hint"
+    else:
+        assumed = _baseline_assumed_like_proxy()
+        like_src = "env_default"
+    log1p_like = round(math.log1p(assumed), 6)
+    x_map = {
+        "title_len": float(title_len),
+        "body_len": float(body_len),
+        "log1p_like": float(log1p_like),
+    }
+    z = icept
+    detail: dict[str, Any] = {
+        "model": "baseline_lr_v0",
+        "title_len": title_len,
+        "body_len": body_len,
+        "assumed_like_proxy": assumed,
+        "like_proxy_source": like_src,
+        "log1p_like": log1p_like,
+        "z_linear": None,
+        "p_logistic_raw": None,
+    }
+    for name in feats:
+        if name not in x_map:
+            return 0.5, {**detail, "error": f"missing_feature:{name}"}
+        z += float(coefs[name]) * x_map[name]
+    detail["z_linear"] = round(z, 6)
+    zc = max(-30.0, min(30.0, z))
+    p = 1.0 / (1.0 + math.exp(-zc))
+    detail["p_logistic_raw"] = round(p, 6)
+    return p, detail
+
+
+def _baseline_mode_and_weight() -> tuple[str, float]:
+    mode = (os.environ.get("XHS_FACTORY_BASELINE_MODE") or "blend").strip().lower()
+    if mode not in ("blend", "replace"):
+        mode = "blend"
+    raw_w = (os.environ.get("XHS_FACTORY_BASELINE_WEIGHT") or "0.35").strip()
+    try:
+        w = float(raw_w)
+    except ValueError:
+        w = 0.35
+    w = max(0.0, min(1.0, w))
+    return mode, w
 
 
 def _normalize_external_sample(raw: dict[str, Any]) -> dict[str, Any] | None:
@@ -600,8 +722,11 @@ def predict_viral_score(
     recreated_text: str,
     gene_sop: Any,
     case_library: list[dict[str, Any]] | None = None,
+    like_proxy_hint: int | None = None,
 ) -> dict[str, Any]:
-    """【预测】默认可复现的线性启发式；仅当 XHS_FACTORY_PREDICT_USE_LLM=1 时才用 MiniMax 覆盖分数。"""
+    """【预测】默认可复现的线性启发式；仅当 XHS_FACTORY_PREDICT_USE_LLM=1 时才用 MiniMax 覆盖分数。
+    like_proxy_hint：可选；>=1 时用于 baseline_lr_v0 的 log1p_like（与训练特征对齐）；否则用 XHS_FACTORY_BASELINE_ASSUMED_LIKE。
+    """
     text = (recreated_text or "").strip()
     g = _norm_gene(gene_sop)
     lib = case_library if isinstance(case_library, list) and case_library else _default_case_library()
@@ -609,6 +734,23 @@ def predict_viral_score(
     ref_mean = sum(ref_scores) / max(len(ref_scores), 1)
     predicted, confidence, risk, breakdown = _deterministic_predict_score(text, gene_sop, lib)
     notes = "deterministic predict_viral_score (linear_clamp_v1; see score_breakdown)"
+    bl_payload = _load_baseline_lr_payload()
+    if bl_payload is not None:
+        p_raw, bl_detail = _baseline_lr_logistic_p(bl_payload, text, like_proxy_hint)
+        if bl_detail.get("error"):
+            notes = notes + f" | baseline_lr_v0: {bl_detail.get('error')}"
+        else:
+            p_lr = max(0.05, min(0.95, float(p_raw)))
+            mode, w = _baseline_mode_and_weight()
+            breakdown = {**breakdown, "baseline_lr": bl_detail}
+            linear_score = float(predicted)
+            if mode == "replace":
+                predicted = round(p_lr, 4)
+                notes = notes + " | baseline_lr_v0 replace"
+            else:
+                predicted = round(w * p_lr + (1.0 - w) * linear_score, 4)
+                notes = notes + f" | baseline_lr_v0 blend(w={w})"
+            predicted = max(0.05, min(0.95, float(predicted)))
     out: dict[str, Any] = {
         "predicted_score": predicted,
         "confidence": confidence,

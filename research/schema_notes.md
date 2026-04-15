@@ -11,7 +11,8 @@
 
 - **模板（可提交）**：`research/labels_spec.example.json`  
 - **本地副本（勿提交）**：复制为 `research/labels_spec.json`（已在 `.gitignore`），按批次改 `viral_like_threshold` 与 `notes`。  
-- **导出特征**：`scripts/export_features_v0.py --labels-spec research/labels_spec.json` 会读取 `viral_like_threshold`（或兼容键 `viral_threshold`）；命令行 `--viral-threshold` 若同时传入则**覆盖** JSON。
+- **导出特征**：`scripts/export_features_v0.py --labels-spec research/labels_spec.json` 会读取 `viral_like_threshold`（或兼容键 `viral_threshold`）；命令行 `--viral-threshold` 若同时传入则**覆盖** JSON。  
+- **训练基线**：`research/train_baseline_v0.py --labels-spec ...` 将同一 JSON 对象原样写入 `research/artifacts/*.json` 的 `labels_spec` 字段，并记录 `input_features_path` 与 `input_features_sha256`（JSON 文件建议 UTF-8；带 BOM 亦可读）。
 
 ## 列说明
 
@@ -25,6 +26,13 @@
 | `sop_tag` | str | 结构标签 | 缺省映射见工厂；**非**客观真理 |
 | `emotion_tag` | str | 情绪标签 | 同上 |
 | `y_rule` | int | 见下 | 仅当使用 `--viral-threshold` 时有效 |
+| `batch_id` | str | 批次标识 | 可选；`--batch-id` → `EXPORT_FEATURES_BATCH_ID` → `--feed-digest` 内 `batch_id`；无则空字符串 |
+| `feed_digest_sha256` | str | 合并侧车 digest 中的 **sha256** | 可选；仅当传入 `--feed-digest` 且文件为 `xhs_feed_digest_v1`；否则空字符串；**`train_baseline_v0` 不使用此列** |
+
+**稳定与安全（推荐正式跑实验时）**
+
+- **`export_features_v0.py --verify-samples-digest`**（须同时 **`--feed-digest`**）：对 `--samples` 文件计算 sha256，**必须与** digest 内 `sha256` 一致，否则脚本失败，避免「digest 与样本文件错配」。- 若 digest 含 `output_path` 与当前 `--samples` 解析路径不一致，会打印**警告**（仍可能内容相同；最终以 `--verify-samples-digest` 的哈希为准）。  
+- **`train_baseline_v0.py`**：若表中出现**多个**非空 `batch_id` 或多个非空 `feed_digest_sha256`，**默认拒绝训练**；显式 **`--allow-mixed-batch`** 方可继续，并在产物中写入 **`features_provenance`**（含 `unique_*` 与 conflict 标记）。
 
 ## 标签 `y_rule`（操作化，非平台真值）
 

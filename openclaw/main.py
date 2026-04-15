@@ -2,7 +2,6 @@ import hashlib
 import json
 import os
 import random
-import re
 import subprocess
 import time
 import urllib.error
@@ -47,64 +46,19 @@ def _pass_min_hermes_hint() -> int:
         return 500
 
 
-def _traffic_quality_tier(text: str) -> int:
-    """
-    与 hermes/metrics.py 保持同逻辑：识别「像真人笔记」的结构信号，用于 boost 词未命中时的档位。
-    返回 0=无加成，1=弱，2=强。
-    """
-    raw = (os.environ.get("TRAFFIC_SIM_QUALITY_ENABLED") or "1").strip().lower()
-    if raw in ("0", "false", "no", "off"):
-        return 0
-    t = text or ""
-    if len(t) < 40:
-        return 0
-    cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
-    if cjk < 8:
-        return 0
-    has_digit = bool(re.search(r"\d", t))
-    has_list = bool(re.search(r"[·•①②③④⑤⑥⑦⑧⑨]|\n\s*\d+\s*[\.、．]", t))
-    if has_digit and has_list:
-        return 2
-    if has_digit or has_list:
-        return 1
-    return 0
-
-
-def _likes_quality_strong() -> int:
-    try:
-        return max(0, int(os.environ.get("TRAFFIC_SIM_LIKES_QUALITY") or "400"))
-    except ValueError:
-        return 400
-
-
 def simulate_traffic_for_text(text: str) -> dict[str, Any]:
     """
-    流量模拟器：命中 boost 词 → 高赞；否则按中文密度+数字+清单感给「质量档」加成（与 Hermes metrics 同环境变量）。
+    流量模拟器：标题/文案里出现 boost词（默认「救命」）→ 高赞，否则低赞。
+    Hermes S3 应与此处规则一致（环境变量同名）。
     """
     kw = _boost_keyword()
     hit = kw in (text or "")
-    tier = _traffic_quality_tier(text)
-    likes_else = _likes_else()
-    likes_hit = _likes_if_hit()
-    likes_q = _likes_quality_strong()
-    if hit:
-        likes = likes_hit
-        rule = f"boost_kw '{kw}' -> {likes_hit}"
-    elif tier >= 2:
-        likes = max(likes_else, likes_q)
-        rule = f"quality_strong tier={tier} -> {likes}"
-    elif tier == 1:
-        likes = max(likes_else, int((likes_else + likes_q) / 2))
-        rule = f"quality_weak tier={tier} -> {likes}"
-    else:
-        likes = likes_else
-        rule = f"baseline -> {likes_else}"
+    likes = _likes_if_hit() if hit else _likes_else()
     return {
         "predicted_likes": likes,
         "boost_keyword": kw,
         "boost_keyword_hit": hit,
-        "quality_tier": tier,
-        "rule": rule,
+        "rule": f"contains '{kw}' -> {_likes_if_hit()} else {_likes_else()}",
     }
 
 
@@ -652,7 +606,18 @@ def _run_predict_viral_score(params: dict[str, Any]) -> dict[str, Any]:
     gene = params.get("gene_sop", {})
     lib = params.get("case_library")
     cl = lib if isinstance(lib, list) else None
-    return xhs_factory.predict_viral_score(text, gene, cl)
+    raw_hint = params.get("like_proxy_hint")
+    if raw_hint is None:
+        raw_hint = params.get("like_proxy")
+    like_hint: int | None = None
+    if raw_hint is not None:
+        try:
+            v = int(raw_hint)
+            if v >= 1:
+                like_hint = v
+        except (TypeError, ValueError):
+            like_hint = None
+    return xhs_factory.predict_viral_score(text, gene, cl, like_proxy_hint=like_hint)
 
 
 def _run_sync_manual_result(params: dict[str, Any]) -> dict[str, Any]:

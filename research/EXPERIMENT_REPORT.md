@@ -40,7 +40,7 @@
 ### 3.2 摘要（最后写）
 
 - **研究问题**（一句话）  
-- **数据**：来源、N、时间范围、赛道/关键词- **方法**：特征版本（如 `features_v0`）、模型（如逻辑回归）  
+- **数据**：来源、N、时间范围、赛道/关键词。**方法**：特征版本（如 `features_v0`）、模型（如逻辑回归）  
 - **主要量化结果**：仅写**本实验**算出的指标（AUC、Brier、校准误差等），无则写「未完成」
 
 ### 3.3 引言与可证伪假设
@@ -68,7 +68,24 @@
 →（可选）research/train_baseline_v0.py → research/artifacts/coef_*.json
 ```
 
-#### 3.4.4 统计- 训练/测试划分比例、随机种子、交叉验证折数  
+**推荐固定命令链（与契约 `research/labels_spec.json` 一致；仓库根目录、Windows）**：
+
+```text
+python scripts\export_features_v0.py --samples openclaw\data\xhs-feed\samples.json --out research\features_v0.csv --labels-spec research\labels_spec.json --feed-digest openclaw\data\xhs-feed\samples.digest.json --verify-samples-digest
+python research\train_baseline_v0.py --features research\features_v0.csv --out research\artifacts\baseline_v0.json --labels-spec research\labels_spec.json --cv-folds 5
+```
+
+- **路径**：上列为仓库内常见落点；若你方 `samples` / digest /输出路径不同，只替换对应参数即可，**不必**与正文字符串逐字一致。  
+- **交叉验证**：`--cv-folds 5` 会写入产出 JSON 的 `cross_validation`（含 `roc_auc_mean` / `roc_auc_std`、`brier_mean` / `brier_std` 等）。若正例或负例过少，分层 K 折可能无法满折：`n_folds_effective` 会小于请求值，且 `n_folds_capped_by_minority_class` 为 `true`（与 `minority_class_count` 一并可审计）。不设 `--cv-folds` 时行为与旧版一致（仅 hold-out + `holdout_brier_score`）。  
+- **折数**：`5` 是正式记录时的**默认推荐**；探索阶段可改小（如 `3`）或改大，但须在报告「材料与方法」中写明所用 `K`。
+
+（若尚未生成 `samples.digest.json`，可先省略 `--feed-digest` 与 `--verify-samples-digest` 两行参数；正式实验建议与合并步骤一并产出 digest。）
+
+**口径（避免误解）**：`--verify-samples-digest` 仅保证 **samples 文件字节级**与 digest 记录一致，**不**替代「`y_rule` 与契约阈值」的校验（请仍跑 `verify_features_labels_spec.py`）。可审计性还来自产物中的 `input_features_sha256`、`features_provenance` 与嵌入的 `labels_spec`。若中途修改契约或重导特征，须重新训练并更新报告。
+
+#### 3.4.4 统计
+
+- 训练/测试划分比例、随机种子、交叉验证折数（与命令行 `--cv-folds` 及 artifact 中 `cross_validation` 一致）  
 - **基线**：多数类、常数预测、仅主效应线性模型  
 - **报告**：点估计 + 置信区间或 CV 方差（勿只报单点准确率）
 
@@ -86,7 +103,8 @@
 ### 3.7 可复现清单
 
 - 命令行历史（或 `research/run_log.txt`）  
-- 输入文件哈希、输出文件路径、依赖 `requirements-research.txt` 版本
+- 输入文件哈希、输出文件路径、依赖 `requirements-research.txt` 版本  
+- 训练前可运行：`python scripts/verify_features_labels_spec.py --features research/features_v0.csv --labels-spec research/labels_spec.json`（确认 `y_rule` 与契约阈值一致）
 
 ---
 
@@ -97,7 +115,7 @@
 | `research/schema_notes.md` | 特征与标签的操作化定义 |
 | `research/features_v0.csv` | 由 `scripts/export_features_v0.py` 生成 |
 | `research/artifacts/` | 训练输出的系数/指标（git可忽略，见 `.gitignore` 建议） |
-| `openclaw/xhs_factory.py` | 在线可解释启发式；**替换为数据驱动公式**须经过本节实验闭环后再挂载 |
+| `openclaw/xhs_factory.py` | 在线：`linear_clamp_v1` 启发式；可选环境变量 **`XHS_FACTORY_BASELINE_JSON`** 挂载 `train_baseline_v0.py` 产出，与线性分 **blend/replace**（见 `.env.example`） |
 | `kb/README.md` | 渐进式 Wiki（解释与索引）；**不**替代本表中的数据与实验真值 |
 
 ---
@@ -105,8 +123,8 @@
 ## 五、下一步（实现闭环）
 
 1. 跑一次 `export_features_v0.py`，检查描述性统计是否合理。  
-2. 安装 `research/requirements-research.txt` 后跑 `train_baseline_v0.py`，把输出的 JSON 附在实验报告「结果」节。  
-3. 仅当某版系数在**时间外样本**上仍稳定时，再考虑写入 `xhs_factory` 的校准分支（另起 PR）。  
+2. 安装 `research/requirements-research.txt` 后跑 `train_baseline_v0.py`（建议带 `--cv-folds 5`），把输出的 JSON 附在实验报告「结果」节，并摘录 `holdout_*` 与 `cross_validation`。  
+3. 系数稳定后，可将对应 JSON 配入 **`XHS_FACTORY_BASELINE_JSON`**（容器内需挂载可读）；**时间外验证**仍须在报告中单独论证，勿与单次 hold-out 混淆。  
 4. 若有心得要沉淀：在 **`kb/`** 里按需加页（见 `kb/README.md`），与实验编号互链即可，**不必**与数据闭环同步「一步到位」。
 
 *本文档随实验迭代增删；参考研究报告中的叙事不得替代本节中的实测表格。*

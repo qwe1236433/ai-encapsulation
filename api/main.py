@@ -59,8 +59,14 @@ def _resolve_export_dedupe(override: str | None) -> str:
     return "none"
 
 
-def _export_to_feed_argv(mc: Path, out: Path, dedupe: str) -> list[str]:
-    return [
+def _export_to_feed_argv(
+    mc: Path,
+    out: Path,
+    dedupe: str,
+    digest_out: str = "",
+    batch_id: str = "",
+) -> list[str]:
+    argv: list[str] = [
         sys.executable,
         str(REPO_ROOT / "scripts" / "export_to_xhs_feed.py"),
         "--in",
@@ -70,6 +76,11 @@ def _export_to_feed_argv(mc: Path, out: Path, dedupe: str) -> list[str]:
         "--dedupe",
         dedupe,
     ]
+    if (digest_out or "").strip():
+        argv.extend(["--digest-out", digest_out.strip()])
+    if (batch_id or "").strip():
+        argv.extend(["--batch-id", batch_id.strip()])
+    return argv
 
 _jobs_lock = threading.Lock()
 _jobs: dict[str, dict[str, Any]] = {}
@@ -150,7 +161,9 @@ def _run_full_pipeline(
         if not script.is_file():
             _job_update(jid, status="error", error="export script missing")
             return
-        argv = _export_to_feed_argv(mc, out, merge_dedupe)
+        digest_out = (os.environ.get("FLOW_API_FEED_DIGEST_OUT") or "").strip()
+        batch_id = (os.environ.get("FLOW_API_FEED_BATCH_ID") or "").strip()
+        argv = _export_to_feed_argv(mc, out, merge_dedupe, digest_out, batch_id)
         try:
             p = subprocess.run(
                 argv,
@@ -370,6 +383,8 @@ def api_config() -> dict[str, Any]:
         "hermes_url": DEFAULT_HERMES.rstrip("/"),
         "openclaw_url": DEFAULT_OPENCLAW.rstrip("/"),
         "export_dedupe_default": _resolve_export_dedupe(None),
+        "feed_digest_out": (os.environ.get("FLOW_API_FEED_DIGEST_OUT") or "").strip() or None,
+        "feed_batch_id": (os.environ.get("FLOW_API_FEED_BATCH_ID") or "").strip() or None,
     }
 
 
@@ -411,7 +426,9 @@ def api_export_feed(
         mode = _resolve_export_dedupe(dedupe)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    argv = _export_to_feed_argv(mc, out, mode)
+    digest_out = (os.environ.get("FLOW_API_FEED_DIGEST_OUT") or "").strip()
+    batch_id = (os.environ.get("FLOW_API_FEED_BATCH_ID") or "").strip()
+    argv = _export_to_feed_argv(mc, out, mode, digest_out, batch_id)
     jid = str(uuid.uuid4())
     with _jobs_lock:
         _jobs[jid] = {

@@ -14,6 +14,11 @@
   --dedupe none 不去重（默认）
   --dedupe key      优先用原始行里的稳定 id；若无则退回正文指纹
   --dedupe content  仅用归一化 title_hint + body_hint 指纹
+
+审计侧车（可选）:
+
+  --digest-out path/to/samples.digest.json
+  --batch-id 20260415-run1
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ import argparse
 import hashlib
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -198,6 +204,36 @@ def _build_feed(
     return out, stats
 
 
+def _emit_digest(
+    digest_path: Path,
+    output_path: Path,
+    st: dict[str, int],
+    dedupe: str,
+    batch_id: str | None = None,
+) -> None:
+    """审计用侧车文件：输出文件 sha256 + merge_stats（不替代 Git LFS/对象存储）。"""
+    raw = output_path.read_bytes()
+    payload: dict[str, Any] = {
+        "schema": "xhs_feed_digest_v1",
+        "output_path": str(output_path.resolve()),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "byte_length": len(raw),
+        "merge_stats": {
+            "raw_rows": st["raw_rows"],
+            "empty_drop": st["empty_drop"],
+            "dedup_drop": st["dedup_drop"],
+            "out": st["out"],
+        },
+        "dedupe": dedupe,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    if batch_id:
+        payload["batch_id"] = batch_id
+    digest_path.parent.mkdir(parents=True, exist_ok=True)
+    digest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"digest: wrote {digest_path}", file=sys.stderr)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="合并导出 JSON → xhs_factory feed")
     ap.add_argument(
@@ -216,7 +252,20 @@ def main() -> int:
         default="none",
         help="合并时去重策略（默认 none，不改变历史行为）",
     )
+    ap.add_argument(
+        "--digest-out",
+        type=str,
+        default="",
+        help="可选：写入审计 JSON（sha256、merge_stats、dedupe）；与本次写出的 feed 文件对应",
+    )
+    ap.add_argument(
+        "--batch-id",
+        type=str,
+        default="",
+        help="可选：写入 digest 的 batch_id（便于与爬虫批次/计划任务对齐；不设则 digest 不含该字段）",
+    )
     args = ap.parse_args()
+    batch_id_s = (args.batch_id or "").strip() or None
 
     raw: list[dict] = []
     for s in args.inputs:
@@ -238,6 +287,14 @@ def main() -> int:
         out_file.write_text(json.dumps(normed, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"Wrote {len(normed)} samples -> {out_file}")
         print(f"话题 slug（与容器内 xhs_factory 一致）: {slug}")
+        if (args.digest_out or "").strip():
+            _emit_digest(
+                Path(args.digest_out).expanduser().resolve(),
+                out_file,
+                st,
+                args.dedupe,
+                batch_id_s,
+            )
         return 0
 
     if args.out:
@@ -245,6 +302,14 @@ def main() -> int:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(normed, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"Wrote {len(normed)} samples -> {out_path}")
+        if (args.digest_out or "").strip():
+            _emit_digest(
+                Path(args.digest_out).expanduser().resolve(),
+                out_path,
+                st,
+                args.dedupe,
+                batch_id_s,
+            )
         return 0
 
     print("请指定 --out 或同时指定 --out-dir 与 --topic", file=sys.stderr)

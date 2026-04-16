@@ -192,5 +192,60 @@ if ($healthLabelsVal) {
 }
 
 Write-Host "Health: gate=$healthGateVal spec=$(if ($healthSpecVal) { $healthSpecVal } else { '(none)' })" -ForegroundColor Cyan
-& python @pyArgs
-exit $LASTEXITCODE
+
+$logDir = Join-Path $root "logs"
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$runLog = Join-Path $logDir "merge-xhs-feed-run.log"
+$stdoutFile = Join-Path $logDir "merge-xhs-feed-last.stdout.txt"
+$stderrFile = Join-Path $logDir "merge-xhs-feed-last.stderr.txt"
+$stamp = ('{0} === merge-xhs-feed ===' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+Add-Content -LiteralPath $runLog -Value $stamp -Encoding UTF8
+Add-Content -LiteralPath $runLog -Value ("cwd=$root") -Encoding UTF8
+Add-Content -LiteralPath $runLog -Value ("args: " + ($pyArgs -join " ")) -Encoding UTF8
+
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    $msg = "python not found on PATH (install Python or activate venv)"
+    Write-Host $msg -ForegroundColor Red
+    Add-Content -LiteralPath $runLog -Value $msg -Encoding UTF8
+    exit 3
+}
+
+Remove-Item -LiteralPath $stdoutFile, $stderrFile -ErrorAction SilentlyContinue
+try {
+    $proc = Start-Process -FilePath "python" -ArgumentList $pyArgs -WorkingDirectory $root `
+        -Wait -PassThru -NoNewWindow `
+        -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+}
+catch {
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Add-Content -LiteralPath $runLog -Value ("Start-Process failed: " + $_.Exception.Message) -Encoding UTF8
+    exit 3
+}
+
+$code = $proc.ExitCode
+Add-Content -LiteralPath $runLog -Value ("exit_code=$code") -Encoding UTF8
+
+function Show-FileLines([string] $Path, [string] $Label, [string] $Color) {
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $t = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace($t)) { return }
+    Write-Host "--- $Label ---" -ForegroundColor $Color
+    Write-Host $t
+}
+
+Show-FileLines $stdoutFile "stdout" "Gray"
+Show-FileLines $stderrFile "stderr" "Yellow"
+
+if ($code -ne 0) {
+    Add-Content -LiteralPath $runLog -Value "---- stderr (full) ----" -Encoding UTF8
+    if (Test-Path -LiteralPath $stderrFile) {
+        Get-Content -LiteralPath $stderrFile -Raw -Encoding UTF8 | Add-Content -LiteralPath $runLog -Encoding UTF8
+    }
+    Add-Content -LiteralPath $runLog -Value "---- stdout (full) ----" -Encoding UTF8
+    if (Test-Path -LiteralPath $stdoutFile) {
+        Get-Content -LiteralPath $stdoutFile -Raw -Encoding UTF8 | Add-Content -LiteralPath $runLog -Encoding UTF8
+    }
+    Write-Host "Merge failed exit=$code. See: $runLog" -ForegroundColor Red
+}
+
+exit $code

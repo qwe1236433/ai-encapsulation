@@ -10,6 +10,15 @@
 .PARAMETER SkipCrawler
   不启动窗 A（只跑合并 + 数分）。
 
+.PARAMETER CrawlerNoAutoRestart
+  传给 run-mediacrawler-xhs-keywords-watch.ps1：子进程退出后不自动重启。
+
+.PARAMETER CrawlerGiveUpAfterQuickExits
+  传给监视脚本：连续快速退出达此次数后停止自动重启（默认 8）。0=不限。
+
+.PARAMETER CrawlerNoRedirectChildLogs
+  传给监视脚本：不重定向 python 输出到 logs。
+
 .PARAMETER WhatIf
   仅打印将执行的启动命令，不新开进程。
 
@@ -23,6 +32,10 @@
 [CmdletBinding()]
 param(
     [switch] $SkipCrawler,
+    [switch] $CrawlerNoAutoRestart,
+    [ValidateRange(0, 100)]
+    [int] $CrawlerGiveUpAfterQuickExits = 8,
+    [switch] $CrawlerNoRedirectChildLogs,
     [switch] $WhatIf
 )
 
@@ -51,7 +64,7 @@ if (-not $SkipCrawler -and -not (Test-Path -LiteralPath $pyMc)) {
 }
 
 function Invoke-PipelineWindow([string] $Title, [string] $Inner) {
-    $cmd = "& { `$Host.UI.RawUI.WindowTitle = '$Title'; Set-Location -LiteralPath '$repo'; $Inner }"
+    $cmd = "& { try { `$Host.UI.RawUI.WindowTitle = '$Title' } catch { }; Set-Location -LiteralPath '$repo'; $Inner }"
     if ($WhatIf) {
         Write-Host "WhatIf: powershell -NoExit -Command $cmd" -ForegroundColor DarkGray
         return
@@ -78,7 +91,10 @@ Invoke-PipelineWindow "XHS-C Analytics digest" "& '$anaScript'"
 
 if (-not $SkipCrawler) {
     Start-Sleep -Milliseconds 600
-    Invoke-PipelineWindow "XHS-A MediaCrawler+watch" "& '$crawlScript'"
+    $crawlInner = "& '$crawlScript' -GiveUpAfterQuickExits $CrawlerGiveUpAfterQuickExits"
+    if ($CrawlerNoAutoRestart) { $crawlInner += " -NoAutoRestart" }
+    if ($CrawlerNoRedirectChildLogs) { $crawlInner += " -NoRedirectChildLogs" }
+    Invoke-PipelineWindow "XHS-A MediaCrawler+watch" $crawlInner
 }
 
 Write-Host "Done. Close windows or use STOP files under logs\ to stop loops." -ForegroundColor Green

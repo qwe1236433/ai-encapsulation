@@ -19,6 +19,15 @@
 .PARAMETER AnalyticsEveryNDigests
   传给 continuous-xhs-analytics.ps1（默认 3）。
 
+.PARAMETER CrawlerNoAutoRestart
+  传给监视脚本：MediaCrawler 进程退出后不自动重启（便于排查闪退）。
+
+.PARAMETER CrawlerGiveUpAfterQuickExits
+  传给监视脚本：连续短进程退出达到此次数后停止自动重启（默认 8，避免网页反复关开）。设为 0 则不限次数。
+
+.PARAMETER CrawlerNoRedirectChildLogs
+  传给监视脚本：不重定向 python 输出到 logs（仅当重定向导致扫码/浏览器异常时使用）。
+
 .PARAMETER WhatIf
   只打印将启动的命令，不实际 Start-Process。
 
@@ -35,6 +44,10 @@ param(
     [ValidateSet("Minimized", "Hidden", "Normal")]
     [string] $WindowStyle = "Minimized",
     [switch] $SkipCrawler,
+    [switch] $CrawlerNoAutoRestart,
+    [ValidateRange(0, 100)]
+    [int] $CrawlerGiveUpAfterQuickExits = 8,
+    [switch] $CrawlerNoRedirectChildLogs,
     [int] $AnalyticsEveryNDigests = 3,
     [switch] $WhatIf
 )
@@ -80,7 +93,7 @@ $mergeArgs = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-Command",
-    "& { `$Host.UI.RawUI.WindowTitle = 'XHS-BG MergeOnly'; Set-Location -LiteralPath '$repo'; & '$mergeScript' -MergeOnly }"
+    "& { try { `$Host.UI.RawUI.WindowTitle = 'XHS-BG MergeOnly' } catch { }; Set-Location -LiteralPath '$repo'; & '$mergeScript' -MergeOnly }"
 )
 Start-BgPowershell "merge" $mergeArgs
 Start-Sleep -Milliseconds 400
@@ -91,21 +104,25 @@ $anaArgs = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-Command",
-    "& { `$Host.UI.RawUI.WindowTitle = 'XHS-BG Analytics'; Set-Location -LiteralPath '$repo'; & '$anaScript' -AnalyticsEveryNDigests $AnalyticsEveryNDigests }"
+    "& { try { `$Host.UI.RawUI.WindowTitle = 'XHS-BG Analytics' } catch { }; Set-Location -LiteralPath '$repo'; & '$anaScript' -AnalyticsEveryNDigests $AnalyticsEveryNDigests }"
 )
 Start-BgPowershell "analytics" $anaArgs
 
 if (-not $SkipCrawler) {
     Start-Sleep -Milliseconds 400
+    $crawlCmd = "& { try { `$Host.UI.RawUI.WindowTitle = 'XHS-BG CrawlerWatch' } catch { }; Set-Location -LiteralPath '$repo'; & '$crawlScript' -GiveUpAfterQuickExits $CrawlerGiveUpAfterQuickExits"
+    if ($CrawlerNoAutoRestart) { $crawlCmd += " -NoAutoRestart" }
+    if ($CrawlerNoRedirectChildLogs) { $crawlCmd += " -NoRedirectChildLogs" }
+    $crawlCmd += " }"
     $crawlArgs = @(
         "-NoExit",
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-Command",
-        "& { `$Host.UI.RawUI.WindowTitle = 'XHS-BG CrawlerWatch'; Set-Location -LiteralPath '$repo'; & '$crawlScript' }"
+        $crawlCmd
     )
     Start-BgPowershell "crawler" $crawlArgs
 }
 
-Write-Host "Done. Logs: logs\continuous-xhs-ingest.log , logs\continuous-xhs-analytics.log" -ForegroundColor Green
+Write-Host "Done. Logs: logs\continuous-xhs-ingest.log , logs\continuous-xhs-analytics.log , logs\mediacrawler-watch.log , logs\mediacrawler-child.stderr.log" -ForegroundColor Green
 Write-Host "STOP files: logs\continuous-xhs-ingest.STOP , logs\continuous-xhs-analytics.STOP" -ForegroundColor DarkGray

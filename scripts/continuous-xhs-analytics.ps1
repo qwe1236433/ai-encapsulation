@@ -335,8 +335,9 @@ while ($true) {
     }
 
     if (-not $LabelsSpec -or -not (Test-Path -LiteralPath $LabelsSpec)) {
-        Write-AnalyticLog "ERROR: need research\labels_spec.json or labels_spec.example.json for export+verify"
-        exit 2
+        Write-AnalyticLog "ERROR: need research\labels_spec.json or labels_spec.example.json for export+verify — sleep ${IntervalMinutes}m and retry"
+        Start-Sleep -Seconds ($IntervalMinutes * 60)
+        continue
     }
 
     $exportOk = $false

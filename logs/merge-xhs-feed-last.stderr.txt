@@ -1,0 +1,5 @@
+merge_stats: raw_rows=1432 empty_drop=3 dedup_drop=706 out=723 dedupe=key
+validate_stats: engine=jsonschema items=723 violation_messages=0 affected_items=0 ok_items=723
+health_stats: items=723 published_at_parseable=723 span_days=2702.825613425926 gates_ok=True fail_reasons=[]
+health: wrote D:\ai·â×°\research\runtime\feed_ingest_health.json
+digest: wrote D:\ai·â×°\openclaw\data\xhs-feed\samples.digest.json

@@ -13,8 +13,31 @@
 .PARAMETER PollSeconds
   轮询间隔，默认 2。
 
+.PARAMETER NoAutoRestart
+  子进程退出后不自动拉起（便于看清报错，避免死循环重启）。
+
+.PARAMETER MinRestartDelaySeconds
+  子进程退出后首次等待秒数，默认 5。
+
+.PARAMETER MaxRestartDelaySeconds
+  连续快速崩溃时退避上限（秒），默认 180。
+
+.PARAMETER GiveUpAfterQuickExits
+  连续「短于阈值即退出」的次数达到此值后，停止自动重启并退出本监视脚本（0=不限制）。便于避免浏览器反复关开。
+
+.PARAMETER NoRedirectChildLogs
+  不把 python 的 stdout/stderr 重定向到 logs（默认会重定向到 mediacrawler-child.*.log，便于查 exit=1 原因）。若扫码/浏览器异常可尝试加此开关。
+
 .EXAMPLE
   .\scripts\run-mediacrawler-xhs-keywords-watch.ps1
+
+.EXAMPLE
+  爬虫一退就停，不重试：
+  .\scripts\run-mediacrawler-xhs-keywords-watch.ps1 -NoAutoRestart
+
+.EXAMPLE
+  连续闪退 6 次后停，避免网页死循环重启：
+  .\scripts\run-mediacrawler-xhs-keywords-watch.ps1 -GiveUpAfterQuickExits 6
 #>
 param(
     [string] $McRoot = "",
@@ -22,7 +45,15 @@ param(
     [ValidateRange(1, 120)]
     [int] $DebounceSeconds = 4,
     [ValidateRange(1, 60)]
-    [int] $PollSeconds = 2
+    [int] $PollSeconds = 2,
+    [switch] $NoAutoRestart,
+    [ValidateRange(1, 600)]
+    [int] $MinRestartDelaySeconds = 5,
+    [ValidateRange(5, 3600)]
+    [int] $MaxRestartDelaySeconds = 180,
+    [ValidateRange(0, 100)]
+    [int] $GiveUpAfterQuickExits = 0,
+    [switch] $NoRedirectChildLogs
 )
 
 $ErrorActionPreference = "Stop"
@@ -113,34 +144,98 @@ function Start-CrawlerProcess([string] $KwLine) {
     else {
         Write-Host "Starting MediaCrawler without --keywords (base_config)" -ForegroundColor DarkYellow
     }
+    if (-not $NoRedirectChildLogs) {
+        $ld = Join-Path $repo "logs"
+        New-Item -ItemType Directory -Force -Path $ld | Out-Null
+        $script:__mcChildOut = Join-Path $ld "mediacrawler-child.stdout.log"
+        $script:__mcChildErr = Join-Path $ld "mediacrawler-child.stderr.log"
+        Write-Host "Child logs: $($script:__mcChildOut) , $($script:__mcChildErr)" -ForegroundColor DarkGray
+        return Start-Process -FilePath $py -ArgumentList $argv -WorkingDirectory $McRoot -PassThru -WindowStyle Normal `
+            -RedirectStandardOutput $script:__mcChildOut -RedirectStandardError $script:__mcChildErr
+    }
     return Start-Process -FilePath $py -ArgumentList $argv -WorkingDirectory $McRoot -PassThru -WindowStyle Normal
 }
 
 $env:PYTHONUTF8 = "1"
+$logDir = Join-Path $repo "logs"
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$watchLog = Join-Path $logDir "mediacrawler-watch.log"
+
+function Write-WatchLog([string] $msg) {
+    $line = ('{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg)
+    Add-Content -LiteralPath $watchLog -Value $line -Encoding UTF8
+    Write-Host $line
+}
+
 Write-Host "Watching keywords: $KeywordsFile" -ForegroundColor Green
 Write-Host "Watching MC config: $McRoot\config\base_config.py, xhs_config.py (debounce=${DebounceSeconds}s poll=${PollSeconds}s)" -ForegroundColor Green
 Write-Host "McRoot: $McRoot"
+Write-Host "Log: $watchLog"
+Write-Host "提示: 浏览器若反复关开，多为 MediaCrawler 进程异常退出后本脚本在重启；查 exit=1 请看 logs\mediacrawler-child.stderr.log 与本日志尾部。" -ForegroundColor DarkYellow
+if ($NoAutoRestart) { Write-Host "NoAutoRestart: child exit will NOT respawn." -ForegroundColor Yellow }
+if ($GiveUpAfterQuickExits -gt 0) { Write-Host "GiveUpAfterQuickExits=$GiveUpAfterQuickExits : 连续短进程退出达此值后将停止自动重启。" -ForegroundColor DarkYellow }
 
 $stableSig = Get-WatchSignature $KeywordsFile $McRoot
 $pendingSince = $null
 $pendingSig = $null
 $child = $null
+$consecutiveQuickExits = 0
+$quickExitThresholdSec = 45
+
+function Get-RestartDelaySeconds {
+    if ($consecutiveQuickExits -le 0) { return $MinRestartDelaySeconds }
+    $extra = ($consecutiveQuickExits - 1) * 20
+    $d = $MinRestartDelaySeconds + $extra
+    if ($d -gt $MaxRestartDelaySeconds) { return $MaxRestartDelaySeconds }
+    return $d
+}
 
 try {
     $line0 = Read-KeywordsLine $KeywordsFile
     $child = Start-CrawlerProcess $line0
+    $childStartUtc = [DateTime]::UtcNow
 
     while ($true) {
         Start-Sleep -Seconds $PollSeconds
 
         if ($null -ne $child -and $child.HasExited) {
-            Write-Host "MediaCrawler exited (code=$($child.ExitCode)). Restarting with current keywords in 3s..." -ForegroundColor Yellow
-            Start-Sleep -Seconds 3
+            $code = $child.ExitCode
+            $runSec = ([DateTime]::UtcNow - $childStartUtc).TotalSeconds
+            if ($runSec -lt $quickExitThresholdSec) {
+                $consecutiveQuickExits++
+            }
+            else {
+                $consecutiveQuickExits = 0
+            }
+            $codeHint = ""
+            if ($code -eq -1073741510 -or $code -eq 3221225786) {
+                $codeHint = " (0xC000013A: 多为 Ctrl+C / 关窗 / taskkill 中断)"
+            }
+            elseif ($code -eq 1) {
+                $codeHint = " (常见: Python 异常退出；见 logs\mediacrawler-child.stderr.log 或加 -NoRedirectChildLogs 用交互控制台)"
+            }
+            Write-WatchLog ("MediaCrawler exited (code={0}{3}, ran {1:N1}s, quickExitStreak={2})." -f $code, $runSec, $consecutiveQuickExits, $codeHint)
+            if (-not $NoRedirectChildLogs -and $script:__mcChildErr -and (Test-Path -LiteralPath $script:__mcChildErr) -and $code -ne 0) {
+                Write-WatchLog "--- mediacrawler-child.stderr.log (tail 45) ---"
+                Get-Content -LiteralPath $script:__mcChildErr -Tail 45 -Encoding UTF8 -ErrorAction SilentlyContinue | ForEach-Object { Write-WatchLog $_ }
+            }
+            if ($GiveUpAfterQuickExits -gt 0 -and $consecutiveQuickExits -ge $GiveUpAfterQuickExits) {
+                Write-WatchLog "GiveUpAfterQuickExits=$GiveUpAfterQuickExits : 已达连续快速退出上限，停止自动重启（避免浏览器反复关开）。请根据上方 stderr 或 mediacrawler-child.stderr.log 修 MediaCrawler。"
+                break
+            }
+            if ($NoAutoRestart) {
+                Write-WatchLog "NoAutoRestart: exiting watch script."
+                break
+            }
+            $delay = Get-RestartDelaySeconds
+            Write-WatchLog "Restarting after ${delay}s (backoff; fix root cause if this repeats)."
+            Start-Sleep -Seconds $delay
             $stableSig = Get-WatchSignature $KeywordsFile $McRoot
             $pendingSince = $null
             $pendingSig = $null
             $line = Read-KeywordsLine $KeywordsFile
             $child = Start-CrawlerProcess $line
+            $childStartUtc = [DateTime]::UtcNow
             continue
         }
 
@@ -178,6 +273,7 @@ try {
         $pendingSig = $null
         $line = Read-KeywordsLine $KeywordsFile
         $child = Start-CrawlerProcess $line
+        $childStartUtc = [DateTime]::UtcNow
     }
 }
 finally {

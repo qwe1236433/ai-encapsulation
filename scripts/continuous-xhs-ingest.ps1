@@ -77,8 +77,15 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $logFile = Join-Path $logDir "continuous-xhs-ingest.log"
 
 function Write-IngestLog([string] $Message) {
-    $line = "{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
-    Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
+    $encBom = New-Object System.Text.UTF8Encoding $true
+    $encNoBom = New-Object System.Text.UTF8Encoding $false
+    $line = ('{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message)
+    if (-not (Test-Path -LiteralPath $logFile)) {
+        [System.IO.File]::WriteAllText($logFile, $line + [Environment]::NewLine, $encBom)
+    }
+    else {
+        [System.IO.File]::AppendAllText($logFile, $line + [Environment]::NewLine, $encNoBom)
+    }
     Write-Host $line
 }
 
@@ -144,6 +151,19 @@ while ($true) {
     & $mergeScript -Dedupe key -BatchId $bid -DigestOut (Join-Path $repoRoot "openclaw\data\xhs-feed\samples.digest.json")
     $mergeExit = $LASTEXITCODE
     Write-IngestLog ("Merge exit={0}" -f $mergeExit)
+    if ($mergeExit -ne 0) {
+        $runLog = Join-Path $repoRoot "logs\merge-xhs-feed-run.log"
+        $errFile = Join-Path $repoRoot "logs\merge-xhs-feed-last.stderr.txt"
+        Write-IngestLog "Merge failed: see $runLog"
+        if (Test-Path -LiteralPath $runLog) {
+            Write-IngestLog "--- tail merge-xhs-feed-run.log ---"
+            Get-Content -LiteralPath $runLog -Tail 45 -Encoding UTF8 | ForEach-Object { Write-IngestLog $_ }
+        }
+        if (Test-Path -LiteralPath $errFile) {
+            Write-IngestLog "--- tail merge-xhs-feed-last.stderr.txt ---"
+            Get-Content -LiteralPath $errFile -Tail 35 -Encoding UTF8 | ForEach-Object { Write-IngestLog $_ }
+        }
+    }
 
     Write-IngestLog ("Sleep {0} minutes until next round..." -f $IntervalMinutes)
     Start-Sleep -Seconds ($IntervalMinutes * 60)

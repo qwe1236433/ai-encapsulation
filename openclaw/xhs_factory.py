@@ -3,7 +3,7 @@
 
 - 挖掘：默认对样本做 **log1p(点赞)** 加权的标签聚合 + 频次众数对照 + 标签熵 + Top 证据列表（`quantitative`），
   大模型仅可选补充 `formulas`，不再默认覆盖主标签。
-- 预测：默认 **linear_clamp_v1** 可复现线性分 + `score_breakdown`；可选读 **`XHS_FACTORY_BASELINE_JSON`**（`train_baseline_v0.py` 产出的系数 JSON）做 **baseline_lr_v0**（logistic，无 sklearn依赖），与线性分 **blend / replace**；`/process` 可传 **`like_proxy_hint` / `like_proxy`** 覆盖草稿场景的 assumed like（仅 baseline分支）。`XHS_FACTORY_PREDICT_USE_LLM=1` 时 MiniMax 仍可在最后覆盖 `predicted_score`。
+- 预测：默认 **linear_clamp_v1** 可复现线性分 + `score_breakdown`；可选读 **`XHS_FACTORY_BASELINE_JSON`**（`train_baseline_v0.py` 产出，`feature_schema_v0` 或 **`feature_schema_v1`**）做 **baseline_lr**（logistic，无 sklearn），与线性分 **blend / replace**；`/process` 可传 **`like_proxy_hint` / `like_proxy`**；v1 还可传 **`comment_proxy_hint`** 等（见 `.env.example`）。`XHS_FACTORY_PREDICT_USE_LLM=1` 时 MiniMax 仍可在最后覆盖 `predicted_score`。
 - 样本接入：改 `_fetch` 或环境变量 `XHS_FACTORY_*`。
 """
 
@@ -13,11 +13,14 @@ import hashlib
 import json
 import math
 import os
+from datetime import datetime, timezone
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
+
+from openclaw.feed_like_parse import like_proxy_with_default
 
 import minimax_client
 import prompt_store
@@ -34,6 +37,118 @@ def _factory_use_minimax() -> bool:
 
 def _topic_file_slug(topic: str) -> str:
     return hashlib.sha256((topic or "").encode("utf-8")).hexdigest()[:16]
+
+
+# --- Feed v1 扩展（与 scripts/export_to_xhs_feed.py 保持同步）---
+_COMMENT_KEYS = (
+    "comment_proxy",
+    "comment_count",
+    "comments_count",
+    "comment_cnt",
+    "note_comment_count",
+    "sub_comment_count",
+)
+_COLLECT_KEYS = (
+    "collect_proxy",
+    "collected_count",
+    "collection_count",
+    "favorite_count",
+    "bookmark_count",
+    "collect_count",
+)
+_SHARE_KEYS = ("share_proxy", "share_count", "shared_count", "forward_count")
+_TIME_STR_KEYS = (
+    "published_at",
+    "publish_time",
+    "create_time",
+    "time",
+    "note_publish_time",
+    "last_update_time",
+)
+_TIME_NUM_KEYS = ("timestamp", "create_timestamp", "publish_timestamp")
+
+
+def _ts_to_iso_utc(ts: float) -> str | None:
+    if ts > 1e12:
+        ts = ts / 1000.0
+    if ts < 0 or ts > 4102444800:
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+
+
+def _coerce_published_at_from_string(s: str) -> str | None:
+    try:
+        s_iso = s.replace("Z", "+00:00") if s.endswith("Z") else s
+        dt = datetime.fromisoformat(s_iso)
+    except ValueError:
+        try:
+            return _ts_to_iso_utc(float(s))
+        except (ValueError, TypeError):
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+
+
+def _parse_published_at_iso(raw: dict[str, Any]) -> str | None:
+    for k in _TIME_STR_KEYS:
+        v = raw.get(k)
+        if v is None or isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)):
+            out = _ts_to_iso_utc(float(v))
+            if out:
+                return out
+            continue
+        if isinstance(v, str):
+            out = _coerce_published_at_from_string(v.strip())
+            if out:
+                return out
+    for k in _TIME_NUM_KEYS:
+        v = raw.get(k)
+        if v is None or isinstance(v, bool):
+            continue
+        try:
+            out = _ts_to_iso_utc(float(v))
+        except (TypeError, ValueError):
+            continue
+        if out:
+            return out
+    return None
+
+
+def _first_nonneg_int(raw: dict[str, Any], *keys: str) -> int | None:
+    for k in keys:
+        v = raw.get(k)
+        if v is None or isinstance(v, bool):
+            continue
+        try:
+            n = int(float(v))
+        except (TypeError, ValueError):
+            continue
+        if n < 0:
+            continue
+        return n
+    return None
+
+
+def _optional_feed_v1_fields(raw: dict[str, Any]) -> dict[str, Any]:
+    ext: dict[str, Any] = {}
+    pa = _parse_published_at_iso(raw)
+    if pa is not None:
+        ext["published_at"] = pa
+    c = _first_nonneg_int(raw, *_COMMENT_KEYS)
+    if c is not None:
+        ext["comment_proxy"] = c
+    col = _first_nonneg_int(raw, *_COLLECT_KEYS)
+    if col is not None:
+        ext["collect_proxy"] = col
+    sh = _first_nonneg_int(raw, *_SHARE_KEYS)
+    if sh is not None:
+        ext["share_proxy"] = sh
+    return ext
 
 
 _baseline_lr_cache: dict[str, Any] | None = None
@@ -70,8 +185,65 @@ def _recreated_text_to_title_body_lengths(text: str) -> tuple[int, int]:
     return len(title_s), len(body_s)
 
 
+_BASELINE_V0_FEATS: tuple[str, ...] = ("title_len", "body_len", "log1p_like")
+_BASELINE_V1_FEATS: tuple[str, ...] = (
+    "title_len",
+    "body_len",
+    "log1p_like",
+    "log1p_comment",
+    "log1p_collect",
+    "log1p_share",
+    "age_days",
+)
+
+
+def _utc_dt_from_published_iso(s: str) -> datetime | None:
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        s_iso = s.replace("Z", "+00:00") if s.endswith("Z") else s
+        dt = datetime.fromisoformat(s_iso)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt
+
+
+def _baseline_nonneg_from_env_hint(env_key: str, hint_key: str, hints: dict[str, Any] | None) -> int:
+    if hints:
+        v = hints.get(hint_key)
+        if v is not None and str(v).strip() != "":
+            try:
+                return max(0, int(float(v)))
+            except (TypeError, ValueError):
+                pass
+    raw = (os.environ.get(env_key) or "0").strip()
+    try:
+        return max(0, int(float(raw)))
+    except ValueError:
+        return 0
+
+
+def _baseline_age_days_from_hint(hints: dict[str, Any] | None) -> float:
+    pa: datetime | None = None
+    if hints and hints.get("published_at"):
+        pa = _utc_dt_from_published_iso(str(hints["published_at"]))
+    if pa is None:
+        raw = (os.environ.get("XHS_FACTORY_BASELINE_ASSUMED_AGE_DAYS") or "0").strip()
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            return 0.0
+    ref = datetime.now(timezone.utc)
+    return max(0.0, (ref - pa).total_seconds() / 86400.0)
+
+
 def _load_baseline_lr_payload() -> dict[str, Any] | None:
-    """读取 research/artifacts/baseline_v0.json 类产物；缓存至文件 mtime 变化。"""
+    """读取 train_baseline_v0产出；支持 feature_schema_v0 / feature_schema_v1。"""
     global _baseline_lr_cache, _baseline_lr_cache_key
     path = (os.environ.get("XHS_FACTORY_BASELINE_JSON") or "").strip()
     if not path or not os.path.isfile(path):
@@ -87,12 +259,20 @@ def _load_baseline_lr_payload() -> dict[str, Any] | None:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(data, dict) or data.get("schema") != "feature_schema_v0":
+    if not isinstance(data, dict):
+        return None
+    schema = data.get("schema")
+    if schema not in ("feature_schema_v0", "feature_schema_v1"):
         return None
     feats = data.get("feature_names")
     coef = data.get("coefficients")
     icept = data.get("intercept")
     if not isinstance(feats, list) or not isinstance(coef, dict) or not isinstance(icept, (int, float)):
+        return None
+    if schema == "feature_schema_v0":
+        if tuple(feats) != _BASELINE_V0_FEATS:
+            return None
+    elif tuple(feats) != _BASELINE_V1_FEATS:
         return None
     for name in feats:
         if name not in coef:
@@ -106,10 +286,12 @@ def _baseline_lr_logistic_p(
     payload: dict[str, Any],
     text: str,
     like_proxy_hint: int | None = None,
+    v1_hints: dict[str, Any] | None = None,
 ) -> tuple[float, dict[str, Any]]:
     feats: list[str] = list(payload["feature_names"])
     coefs: dict[str, Any] = payload["coefficients"]
     icept = float(payload["intercept"])
+    schema = str(payload.get("schema") or "")
     title_len, body_len = _recreated_text_to_title_body_lengths(text)
     if like_proxy_hint is not None and int(like_proxy_hint) >= 1:
         assumed = int(like_proxy_hint)
@@ -118,14 +300,25 @@ def _baseline_lr_logistic_p(
         assumed = _baseline_assumed_like_proxy()
         like_src = "env_default"
     log1p_like = round(math.log1p(assumed), 6)
-    x_map = {
+    x_map: dict[str, float] = {
         "title_len": float(title_len),
         "body_len": float(body_len),
         "log1p_like": float(log1p_like),
     }
+    if schema == "feature_schema_v1":
+        h = v1_hints or {}
+        cmt = _baseline_nonneg_from_env_hint("XHS_FACTORY_BASELINE_ASSUMED_COMMENT", "comment_proxy", h)
+        col = _baseline_nonneg_from_env_hint("XHS_FACTORY_BASELINE_ASSUMED_COLLECT", "collect_proxy", h)
+        shr = _baseline_nonneg_from_env_hint("XHS_FACTORY_BASELINE_ASSUMED_SHARE", "share_proxy", h)
+        age = _baseline_age_days_from_hint(h)
+        x_map["log1p_comment"] = float(round(math.log1p(cmt), 6))
+        x_map["log1p_collect"] = float(round(math.log1p(col), 6))
+        x_map["log1p_share"] = float(round(math.log1p(shr), 6))
+        x_map["age_days"] = float(round(age, 6))
     z = icept
     detail: dict[str, Any] = {
-        "model": "baseline_lr_v0",
+        "model": "baseline_lr_v1" if schema == "feature_schema_v1" else "baseline_lr_v0",
+        "schema": schema,
         "title_len": title_len,
         "body_len": body_len,
         "assumed_like_proxy": assumed,
@@ -134,6 +327,20 @@ def _baseline_lr_logistic_p(
         "z_linear": None,
         "p_logistic_raw": None,
     }
+    if schema == "feature_schema_v1":
+        detail["v1_assumptions"] = {
+            "comment_proxy": _baseline_nonneg_from_env_hint(
+                "XHS_FACTORY_BASELINE_ASSUMED_COMMENT", "comment_proxy", v1_hints
+            ),
+            "collect_proxy": _baseline_nonneg_from_env_hint(
+                "XHS_FACTORY_BASELINE_ASSUMED_COLLECT", "collect_proxy", v1_hints
+            ),
+            "share_proxy": _baseline_nonneg_from_env_hint(
+                "XHS_FACTORY_BASELINE_ASSUMED_SHARE", "share_proxy", v1_hints
+            ),
+            "age_days": round(_baseline_age_days_from_hint(v1_hints), 6),
+            "published_at_hint": (v1_hints or {}).get("published_at"),
+        }
     for name in feats:
         if name not in x_map:
             return 0.5, {**detail, "error": f"missing_feature:{name}"}
@@ -185,19 +392,18 @@ def _normalize_external_sample(raw: dict[str, Any]) -> dict[str, Any] | None:
     if not body_s:
         body_s = title_s
     likes = raw.get("like_proxy") or raw.get("liked_count") or raw.get("likes") or raw.get("like_count")
-    try:
-        like_proxy = int(likes) if likes is not None else 100
-    except (TypeError, ValueError):
-        like_proxy = 100
+    like_proxy = like_proxy_with_default(likes, default=100)
     sop = str(raw.get("sop_tag") or raw.get("viral_sop") or "对照式").strip()[:32] or "对照式"
     emo = str(raw.get("emotion_tag") or raw.get("target_emotion") or "共鸣").strip()[:32] or "共鸣"
-    return {
+    out: dict[str, Any] = {
         "title_hint": title_s,
         "body_hint": body_s,
         "like_proxy": max(1, like_proxy),
         "sop_tag": sop,
         "emotion_tag": emo,
     }
+    out.update(_optional_feed_v1_fields(raw))
+    return out
 
 
 def _load_json_array_from_path(path: str) -> list[dict[str, Any]]:
@@ -723,9 +929,11 @@ def predict_viral_score(
     gene_sop: Any,
     case_library: list[dict[str, Any]] | None = None,
     like_proxy_hint: int | None = None,
+    baseline_v1_hints: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """【预测】默认可复现的线性启发式；仅当 XHS_FACTORY_PREDICT_USE_LLM=1 时才用 MiniMax 覆盖分数。
-    like_proxy_hint：可选；>=1 时用于 baseline_lr_v0 的 log1p_like（与训练特征对齐）；否则用 XHS_FACTORY_BASELINE_ASSUMED_LIKE。
+    like_proxy_hint：可选；>=1 时用于 baseline 的 log1p_like；否则用 XHS_FACTORY_BASELINE_ASSUMED_LIKE。
+    baseline_v1_hints：feature_schema_v1 时可选 comment_proxy / collect_proxy / share_proxy / published_at（ISO），缺省读 XHS_FACTORY_BASELINE_ASSUMED_* 环境变量。
     """
     text = (recreated_text or "").strip()
     g = _norm_gene(gene_sop)
@@ -736,9 +944,11 @@ def predict_viral_score(
     notes = "deterministic predict_viral_score (linear_clamp_v1; see score_breakdown)"
     bl_payload = _load_baseline_lr_payload()
     if bl_payload is not None:
-        p_raw, bl_detail = _baseline_lr_logistic_p(bl_payload, text, like_proxy_hint)
+        p_raw, bl_detail = _baseline_lr_logistic_p(
+            bl_payload, text, like_proxy_hint, v1_hints=baseline_v1_hints
+        )
         if bl_detail.get("error"):
-            notes = notes + f" | baseline_lr_v0: {bl_detail.get('error')}"
+            notes = notes + f" | baseline_lr: {bl_detail.get('error')}"
         else:
             p_lr = max(0.05, min(0.95, float(p_raw)))
             mode, w = _baseline_mode_and_weight()
@@ -746,10 +956,10 @@ def predict_viral_score(
             linear_score = float(predicted)
             if mode == "replace":
                 predicted = round(p_lr, 4)
-                notes = notes + " | baseline_lr_v0 replace"
+                notes = notes + " | baseline_lr replace"
             else:
                 predicted = round(w * p_lr + (1.0 - w) * linear_score, 4)
-                notes = notes + f" | baseline_lr_v0 blend(w={w})"
+                notes = notes + f" | baseline_lr blend(w={w})"
             predicted = max(0.05, min(0.95, float(predicted)))
     out: dict[str, Any] = {
         "predicted_score": predicted,

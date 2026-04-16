@@ -1,0 +1,60 @@
+﻿========== XHS factory export ==========
+Time: 2026-04-15 20:09:08
+task_id: 699b86b4-c136-4a8a-8e54-8c5cd58606c9
+goal: XHS note: steak doneness utf8 check
+final_status: paused_manual
+lifecycle_phase: awaiting_manual_publish
+Poll full JSON: GET http://127.0.0.1:8080/task/699b86b4-c136-4a8a-8e54-8c5cd58606c9
+
+[headline]
+一份秒懂的牛排熟度指南，收藏下次不翻车
+
+[body]
+上次请客户吃饭，我点了份五分熟西冷
+咬下去差点当场社死
+
+这事让我彻底搞懂了这张图
+分享给不想踩坑的你
+
+🥩 牛排熟度完整对照
+
+√ 一分熟（Rare）
+中心血红，46-52℃，按压几乎不回弹
+我只在进口超市买原肉才会选这个
+
+√ 三分熟（Medium-Rare）
+切面呈淡粉，按压柔软有弹性
+菲力/里脊这种嫩部位建议选这个
+
+√ 五分熟（Medium）
+中心淡粉带红，57-63℃，压下去轻微回弹
+眼肉、牛柳推荐这个熟度
+
+√ 七分熟（Medium-Well）
+中心浅灰带棕，63-68℃，明显紧实
+西冷/板腱点这个不容易出错
+
+√ 全熟（Well-Done）
+中心灰棕色，71℃以上，完全无血水
+老外基本不点这个，汁水流失严重
+
+🔥 极端值提示
+外焦里不焦才是真的香，别追求焦化过度
+表面200℃美拉德反应，锁住内部汁水才是正确操作
+
+我的固定选择：眼肉五分熟，菲力三分熟
+不踩雷组合，亲测有效
+
+评论区留你的熟度偏好，点赞最高的送牛排馆推荐
+
+[hashtags]
+#牛排熟度 #西餐点餐 #新手必看 #Steak攻略
+
+[image_prompt]
+小红书竖版封面 1080x1440，主标题「一份秒懂的牛排熟度指南，收藏下次不翻车」，风格偏sharp，留白清晰、对比强。
+
+[notes]
+Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id.
+
+========== end ==========
+

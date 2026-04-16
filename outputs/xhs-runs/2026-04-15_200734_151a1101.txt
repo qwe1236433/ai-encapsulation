@@ -1,0 +1,25 @@
+﻿========== XHS factory export ==========
+Time: 2026-04-15 20:07:34
+task_id: 151a1101-6289-4416-9bcd-9e9c165c5bc0
+goal: steak test utf8
+final_status: failed
+lifecycle_phase: failed
+Poll full JSON: GET http://127.0.0.1:8080/task/151a1101-6289-4416-9bcd-9e9c165c5bc0
+
+[headline]
+Steak meets UTF‑8: the hidden test
+
+[body]
+
+
+[hashtags]
+
+
+[image_prompt]
+
+
+[notes]
+minimax generate_headline
+
+========== end ==========
+

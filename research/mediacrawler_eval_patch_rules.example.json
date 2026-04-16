@@ -1,0 +1,26 @@
+{
+  "schema": "mediacrawler_eval_patch_rules_v1",
+  "comment": "Copy to research/runtime/mediacrawler_eval_patch_rules.json. Conditions are optional; omit or use null to ignore. All matching rules merge (later rules override same keys).",
+  "rules": [
+    {
+      "name": "example_small_sample_slower_crawl",
+      "if_any_warning": ["small_sample_n_lt_50"],
+      "set": {
+        "base_config": {
+          "MAX_CONCURRENCY_NUM": 1,
+          "CRAWLER_MAX_SLEEP_SEC": 4
+        }
+      }
+    },
+    {
+      "name": "example_more_notes_when_data_grows",
+      "if_n_samples_gte": 200,
+      "if_holdout_auc_lt": 0.99,
+      "set": {
+        "base_config": {
+          "CRAWLER_MAX_NOTES_COUNT": 30
+        }
+      }
+    }
+  ]
+}

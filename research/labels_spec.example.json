@@ -1,7 +1,9 @@
 {
   "schema_version": "1",
   "viral_like_threshold": 1000,
+  "viral_like_threshold_alt": 5000,
   "label_name": "y_rule_high_like",
-  "notes": "操作化标签：like_proxy >= viral_like_threshold 则 y_rule=1；非平台「爆文」真值；跨批次比较需单独论证。",
+  "label_name_alt": "y_rule_very_high_like",
+  "notes": "主标签 y_rule：like >= viral_like_threshold。次标签 y_rule_alt（可选）：like >= viral_like_threshold_alt，用于更严「爆款」操作化或多目标分析；训练时 --target-column y_rule_alt。",
   "data_snapshot_hint": "openclaw/data/xhs-feed/samples.json"
 }

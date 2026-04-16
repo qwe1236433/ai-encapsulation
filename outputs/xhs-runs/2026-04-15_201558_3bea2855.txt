@@ -1,0 +1,61 @@
+﻿========== XHS factory export ==========
+Time: 2026-04-15 20:15:58
+task_id: 3bea2855-749a-43b7-83e7-218b10f0c78b
+goal: XHS note: steak doneness guide, colloquial, save-worthy
+final_status: paused_manual
+lifecycle_phase: awaiting_manual_publish
+Poll full JSON: GET http://127.0.0.1:8080/task/3bea2855-749a-43b7-83e7-218b10f0c78b
+
+[headline]
+点牛排不再慌，一张图记住7个熟度
+
+[body]
+上次帮朋友过生日，点了牛排。
+服务员问几分熟，我愣了三秒。
+
+后来自己做了功课，整理成这张表👇
+
+🔥 Bleu
+外热内冷，切开几乎全红
+触感：按压像额头
+适合：厚切西冷
+
+🔥 Medium-Rare
+中心呈草莓红，外围灰褐
+触感：按压像虎口
+适合：肉眼
+
+🔥 Medium
+中心粉红渐变，汁水最多
+触感：按压像下巴
+适合：大部分牛排
+
+🔥 Medium-Well
+中心留一点粉，边缘全灰
+触感：按压像嘴唇
+适合：怕血水的长辈
+
+🔥 Well-Done
+通体灰褐，肉质紧实
+触感：按压像手背
+适合：完全不吃生的
+
+我一般点三分熟。
+不是装，是真的嫩。
+
+如果你从没试过，下次可以点三分熟配薯角。
+真的会不一样。
+
+你一般点几分熟？评论区说说👇
+
+[hashtags]
+#牛排熟度表 #点餐不踩雷 #西冷肉眼指南
+
+[image_prompt]
+小红书竖版封面 1080x1440，主标题「点牛排不再慌，一张图记住7个熟度」，风格偏minimal，留白清晰、对比强。
+
+[notes]
+Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id.
+
+========== end ==========
+

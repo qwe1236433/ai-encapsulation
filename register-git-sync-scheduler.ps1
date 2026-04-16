@@ -1,4 +1,4 @@
-﻿# 以「当前用户」注册 Windows 计划任务：每 5 分钟执行 git-github-sync.ps1
+﻿# 以「当前用户」注册 Windows 计划任务：默认每 2 小时（120 分钟）执行 git-github-sync.ps1
 # 需要：以管理员打开 PowerShell（部分环境创建/覆盖任务需要提升权限）
 # 说明：任务推送的是「本机该目录当前检出分支」上的改动；`任务进程与结果总结.md` 等与代码同一提交。
 #       若希望默认都进 GitHub 的 main，请在本机仓库保持 `git checkout main`。
@@ -12,7 +12,7 @@
 
 param(
     [string] $RepoPath = "",
-    [int] $IntervalMinutes = 5,
+    [int] $IntervalMinutes = 120,
     [string] $TaskName = "AiFengzhuang-GitHub-Sync"
 )
 
@@ -36,6 +36,12 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
-Write-Host "Registered: $TaskName (every $IntervalMinutes min)" -ForegroundColor Green
+if ($IntervalMinutes -ge 60 -and ($IntervalMinutes % 60) -eq 0) {
+    $hrs = $IntervalMinutes / 60
+    Write-Host "Registered: $TaskName (every $hrs hour(s), $IntervalMinutes min)" -ForegroundColor Green
+}
+else {
+    Write-Host "Registered: $TaskName (every $IntervalMinutes min)" -ForegroundColor Green
+}
 Write-Host "Log: $RepoPath\.local\git-sync.log"
 Write-Host "Test: Start-ScheduledTask -TaskName '$TaskName'"

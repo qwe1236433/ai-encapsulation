@@ -41,6 +41,7 @@ outputs/.runtime-goals/
 
 # 计划任务：merge-xhs-feed 追加日志（见 install-merge-xhs-feed-scheduled-task.ps1）
 logs/merge-xhs-feed.log
+logs/analytics-digest-generation.json
 
 # 本地 smoke / 同步脚本生成的任务快照
 *-last-task.json
@@ -49,5 +50,9 @@ last-task-sync.json
 # 爆文研究：本地特征表与训练产物（可复现命令见 research/EXPERIMENT_REPORT.md）
 research/features_v0.csv
 research/artifacts/*.json
+research/analytics_history/
+research/runtime/
 # 从 labels_spec.example.json 复制并本地修改阈值/说明（勿提交个人契约）
 research/labels_spec.json
+research/keyword_seed.txt
+research/keyword_rotation_pool.txt

@@ -1,0 +1,28 @@
+﻿========== XHS factory export ==========
+时间: 2026-04-15 18:08:30
+任务ID(task_id): ce155c43-1aa1-47ba-8cfe-776fbf44fbaf
+目标(goal): xhs 副业复盘笔记
+final_status: paused_manual
+lifecycle_phase: awaiting_manual_publish
+查询完整JSON: GET http://127.0.0.1:8080/task/ce155c43-1aa1-47ba-8cfe-776fbf44fbaf
+
+【标题 headline】
+对照式·xhs 副业复盘笔记·steady表达
+
+【正文 body】
+【结构:对照式 / 情绪:共鸣】
+开头：用「对照式」承接「共鸣」，前3秒抛出与「xhs 副业复盘笔记」强相关的反差信息
+中段：围绕「xhs 副业复盘笔记」拆 3 点，每点一句落地动作。
+结尾：一句互动提问 + 引导收藏。
+（style=steady）
+
+【话题标签 hashtags】
+#对照式 #共鸣 #steady #小红书成长
+
+【配图描述 image_prompt】
+小红书竖版封面 1080x1440，主标题「对照式·xhs 副业复盘笔记·steady表达」，风格偏steady，留白清晰、对比强。
+
+【备注 notes】
+Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id.
+
+========== end ==========

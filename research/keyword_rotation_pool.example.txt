@@ -1,0 +1,7 @@
+# 每行一个主题（或短词），每次跑 suggest_keywords 时轮询取一行放在种子最前，减轻单一搜索同质化。
+# 复制为 keyword_rotation_pool.txt 后按需增删（可提交 example，本地 pool 建议 gitignore）。
+
+牛排熟度
+减脂餐便当
+露营装备清单
+新手化妆教程

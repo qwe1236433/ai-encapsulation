@@ -28,6 +28,10 @@ from pydantic import BaseModel, Field
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(REPO_ROOT / ".env")
+# continuous-xhs-analytics.ps1 写入；仅含 XHS_FACTORY_BASELINE_JSON 等少量键，override只覆盖这些键
+_factory_env = REPO_ROOT / "research" / "runtime" / "factory_baseline.env"
+if _factory_env.is_file():
+    load_dotenv(_factory_env, override=True)
 WEB_DIR = REPO_ROOT / "web"
 OUTPUT_RUNS = REPO_ROOT / "outputs" / "xhs-runs"
 
@@ -91,6 +95,18 @@ def _export_to_feed_argv(
     vs = (os.environ.get("FLOW_API_EXPORT_VALIDATE_SCHEMA") or "").strip()
     if vs:
         argv.extend(["--validate-schema", vs])
+    hg = (os.environ.get("FLOW_API_FEED_HEALTH_GATE_MODE") or "").strip().lower()
+    if hg in ("report", "fail"):
+        argv.extend(["--health-gate-mode", hg])
+    hs = (os.environ.get("FLOW_API_FEED_HEALTH_SPEC") or "").strip()
+    if hs:
+        argv.extend(["--health-spec", hs])
+    hr = (os.environ.get("FLOW_API_FEED_HEALTH_REPORT_OUT") or "").strip()
+    if hg in ("report", "fail") and hr:
+        argv.extend(["--health-report-out", hr])
+    hl = (os.environ.get("FLOW_API_FEED_HEALTH_LABELS_SPEC") or "").strip()
+    if hl:
+        argv.extend(["--health-labels-spec", hl])
     return argv
 
 _jobs_lock = threading.Lock()

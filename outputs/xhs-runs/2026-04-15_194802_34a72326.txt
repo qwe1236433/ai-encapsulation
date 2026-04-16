@@ -1,0 +1,29 @@
+﻿========== XHS factory export ==========
+Time: 2026-04-15 19:48:02
+task_id: 34a72326-dd85-4d87-add0-f03720a9351c
+goal: XHS note: steak doneness explainer, colloquial, save-worthy
+final_status: paused_manual
+lifecycle_phase: awaiting_manual_publish
+Poll full JSON: GET http://127.0.0.1:8080/task/34a72326-dd85-4d87-add0-f03720a9351c
+
+[headline]
+åçº§å¾ç¤º+æ°å­éå+æ¶èå¼å¯¼Â·XHS note: steak doneness expÂ·sharpè¡¨è¾¾
+
+[body]
+ãç»æ:åçº§å¾ç¤º+æ°å­éå+æ¶èå¼å¯¼ / æç»ª:ç¦èç¼è§£ã
+å¼å¤´ï¼ä»¥ãç¹çææ¶çå°´å°¬æ¶å»ãå¼ç¯ï¼æåºãå°åºå åçæå¯¹ãçè®¤ç¥ç¦èï¼ç¨æ¸©åº¦/æ¶é´éå+å®æ´çåº¦å¾è°±ä¸æ¬¡æ§è§£å³éæ©å°é¾ï¼ç»å°¾å¼å¯¼ãä½ ä¹ æ¯å åçï¼ãä¿äºå¨ã
+ä¸­æ®µï¼å´ç»ãXHS note: steak doneness explainer, colloquial, save-worthyãæ 3 ç¹ï¼æ¯ç¹ä¸å¥è½å°å¨ä½ã
+ç»å°¾ï¼ä¸å¥äºå¨æé® + å¼å¯¼æ¶èã
+ï¼style=sharpï¼
+
+[hashtags]
+#åçº§å¾ç¤º+æ° #ç¦èç¼è§£ #sharp #å°çº¢ä¹¦æé¿
+
+[image_prompt]
+å°çº¢ä¹¦ç«çå°é¢ 1080x1440ï¼ä¸»æ é¢ãåçº§å¾ç¤º+æ°å­éå+æ¶èå¼å¯¼Â·XHS note:ãï¼é£æ ¼åsharpï¼çç½æ¸æ°ãå¯¹æ¯å¼ºã
+
+[notes]
+Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id.
+
+========== end ==========
+

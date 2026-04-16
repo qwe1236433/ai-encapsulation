@@ -5,13 +5,23 @@
 #   .\scripts\merge-xhs-feed.ps1
 #   .\scripts\merge-xhs-feed.ps1 -Dedupe key
 #   .\scripts\merge-xhs-feed.ps1 -In "D:\path\to\jsonl" -Out "openclaw\data\xhs-feed\samples.json"
+# 数据质量：未设置 FLOW_API_EXPORT_VALIDATE_MODE 时，本脚本默认 --validate-mode report（stderr 报告，不挡写出）。
+#   关闭：-ValidateMode none 或 .env 中 FLOW_API_EXPORT_VALIDATE_MODE=none
+# 入库前健康度：未设置 FLOW_API_FEED_HEALTH_GATE_MODE 时默认 report（写 research/runtime/feed_ingest_health.json，不挡写出）。
+#   硬拦截：.env 设 FLOW_API_FEED_HEALTH_GATE_MODE=fail 并提供 FLOW_API_FEED_HEALTH_SPEC（或 -HealthSpec）。
 
 param(
     [string] $InPath = "",
     [string] $OutPath = "",
     [string] $Dedupe = "",
     [string] $DigestOut = "",
-    [string] $BatchId = ""
+    [string] $BatchId = "",
+    [string] $ValidateMode = "",
+    [string] $ValidateSchema = "",
+    [string] $HealthGateMode = "",
+    [string] $HealthSpec = "",
+    [string] $HealthReportOut = "",
+    [string] $HealthLabelsSpec = ""
 )
 
 $root = Split-Path $PSScriptRoot -Parent
@@ -86,7 +96,27 @@ if (-not $batchVal) {
     if (-not $batchVal) { $batchVal = "" }
 }
 
-Write-Host "Merge: $InPath -> $OutPath (dedupe=$dedupeVal)" -ForegroundColor Cyan
+$validateVal = $ValidateMode.Trim().ToLowerInvariant()
+if ($validateVal -and $validateVal -notin @("none", "report", "warn", "fail")) {
+    Write-Host "ValidateMode must be none, report, warn, or fail. Got: $ValidateMode" -ForegroundColor Red
+    exit 2
+}
+if (-not $validateVal) {
+    $validateVal = [Environment]::GetEnvironmentVariable("FLOW_API_EXPORT_VALIDATE_MODE", "Process")
+    if (-not $validateVal) { $validateVal = Get-DotEnvValue $envFile "FLOW_API_EXPORT_VALIDATE_MODE" }
+    if (-not $validateVal) { $validateVal = "report" }
+    $validateVal = $validateVal.Trim().ToLowerInvariant()
+    if ($validateVal -notin @("none", "report", "warn", "fail")) { $validateVal = "report" }
+}
+
+$schemaVal = $ValidateSchema.Trim()
+if (-not $schemaVal) {
+    $schemaVal = [Environment]::GetEnvironmentVariable("FLOW_API_EXPORT_VALIDATE_SCHEMA", "Process")
+    if (-not $schemaVal) { $schemaVal = Get-DotEnvValue $envFile "FLOW_API_EXPORT_VALIDATE_SCHEMA" }
+    if (-not $schemaVal) { $schemaVal = "" }
+}
+
+Write-Host "Merge: $InPath -> $OutPath (dedupe=$dedupeVal validate=$validateVal)" -ForegroundColor Cyan
 $pyArgs = @(
     "scripts\export_to_xhs_feed.py",
     "--in", $InPath,
@@ -99,5 +129,68 @@ if ($digestVal) {
 if ($batchVal) {
     $pyArgs += @("--batch-id", $batchVal)
 }
+if ($validateVal -ne "none") {
+    $pyArgs += @("--validate-mode", $validateVal)
+}
+if ($schemaVal) {
+    $pyArgs += @("--validate-schema", $schemaVal)
+}
+
+$healthGateVal = $HealthGateMode.Trim().ToLowerInvariant()
+if ($healthGateVal -and $healthGateVal -notin @("none", "report", "fail")) {
+    Write-Host "HealthGateMode must be none, report, or fail. Got: $HealthGateMode" -ForegroundColor Red
+    exit 2
+}
+if (-not $healthGateVal) {
+    $healthGateVal = [Environment]::GetEnvironmentVariable("FLOW_API_FEED_HEALTH_GATE_MODE", "Process")
+    if (-not $healthGateVal) { $healthGateVal = Get-DotEnvValue $envFile "FLOW_API_FEED_HEALTH_GATE_MODE" }
+    if (-not $healthGateVal) { $healthGateVal = "report" }
+    $healthGateVal = $healthGateVal.Trim().ToLowerInvariant()
+    if ($healthGateVal -notin @("none", "report", "fail")) { $healthGateVal = "report" }
+}
+
+$healthSpecVal = $HealthSpec.Trim()
+if (-not $healthSpecVal) {
+    $healthSpecVal = [Environment]::GetEnvironmentVariable("FLOW_API_FEED_HEALTH_SPEC", "Process")
+    if (-not $healthSpecVal) { $healthSpecVal = Get-DotEnvValue $envFile "FLOW_API_FEED_HEALTH_SPEC" }
+    if (-not $healthSpecVal) { $healthSpecVal = "" }
+}
+
+$healthReportVal = $HealthReportOut.Trim()
+if (-not $healthReportVal) {
+    $healthReportVal = [Environment]::GetEnvironmentVariable("FLOW_API_FEED_HEALTH_REPORT_OUT", "Process")
+    if (-not $healthReportVal) { $healthReportVal = Get-DotEnvValue $envFile "FLOW_API_FEED_HEALTH_REPORT_OUT" }
+    if (-not $healthReportVal) {
+        $healthReportVal = Join-Path $root "research\runtime\feed_ingest_health.json"
+    }
+}
+
+$healthLabelsVal = $HealthLabelsSpec.Trim()
+if (-not $healthLabelsVal) {
+    $healthLabelsVal = [Environment]::GetEnvironmentVariable("FLOW_API_FEED_HEALTH_LABELS_SPEC", "Process")
+    if (-not $healthLabelsVal) { $healthLabelsVal = Get-DotEnvValue $envFile "FLOW_API_FEED_HEALTH_LABELS_SPEC" }
+    if (-not $healthLabelsVal) {
+        $lsH = Join-Path $root "research\labels_spec.json"
+        $lsEx = Join-Path $root "research\labels_spec.example.json"
+        if (Test-Path -LiteralPath $lsH) { $healthLabelsVal = $lsH }
+        elseif (Test-Path -LiteralPath $lsEx) { $healthLabelsVal = $lsEx }
+        else { $healthLabelsVal = "" }
+    }
+}
+
+if ($healthGateVal -ne "none") {
+    $pyArgs += @("--health-gate-mode", $healthGateVal)
+}
+if ($healthSpecVal) {
+    $pyArgs += @("--health-spec", $healthSpecVal)
+}
+if ($healthGateVal -ne "none" -and $healthReportVal) {
+    $pyArgs += @("--health-report-out", $healthReportVal)
+}
+if ($healthLabelsVal) {
+    $pyArgs += @("--health-labels-spec", $healthLabelsVal)
+}
+
+Write-Host "Health: gate=$healthGateVal spec=$(if ($healthSpecVal) { $healthSpecVal } else { '(none)' })" -ForegroundColor Cyan
 & python @pyArgs
 exit $LASTEXITCODE

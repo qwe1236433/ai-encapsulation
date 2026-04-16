@@ -1,10 +1,10 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  注册 / 卸载 Windows 计划任务：按固定间隔运行 auto-push-hourly.ps1（默认每 5 分钟）。
+  注册 / 卸载 Windows 计划任务：按固定间隔运行 auto-push-hourly.ps1（默认每 2 小时 / 120 分钟）。
 
 .PARAMETER IntervalMinutes
-  重复间隔（分钟），默认 5。
+  重复间隔（分钟），默认 120。
 
 .PARAMETER Uninstall
   移除计划任务
@@ -22,7 +22,7 @@
 param(
     [switch] $Uninstall,
     [ValidateRange(1, 1440)]
-    [int] $IntervalMinutes = 5,
+    [int] $IntervalMinutes = 120,
     [string] $RepoRoot = ""
 )
 
@@ -63,6 +63,12 @@ $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interac
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
 
-Write-Host "Registered: $TaskName (every $IntervalMinutes min)" -ForegroundColor Green
+if ($IntervalMinutes -ge 60 -and ($IntervalMinutes % 60) -eq 0) {
+    $hrs = $IntervalMinutes / 60
+    Write-Host "Registered: $TaskName (every $hrs hour(s), $IntervalMinutes min)" -ForegroundColor Green
+}
+else {
+    Write-Host "Registered: $TaskName (every $IntervalMinutes min)" -ForegroundColor Green
+}
 Write-Host "Log: $RepoRoot\.local\auto-push-hourly.log"
 Write-Host "Uninstall: .\install-hourly-push-task.ps1 -Uninstall"

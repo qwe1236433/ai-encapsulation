@@ -617,7 +617,22 @@ def _run_predict_viral_score(params: dict[str, Any]) -> dict[str, Any]:
                 like_hint = v
         except (TypeError, ValueError):
             like_hint = None
-    return xhs_factory.predict_viral_score(text, gene, cl, like_proxy_hint=like_hint)
+    v1_hints: dict[str, Any] = {}
+    for param_key, hint_key in (
+        ("comment_proxy_hint", "comment_proxy"),
+        ("collect_proxy_hint", "collect_proxy"),
+        ("share_proxy_hint", "share_proxy"),
+        ("published_at_hint", "published_at"),
+    ):
+        if params.get(param_key) is not None and str(params.get(param_key)).strip() != "":
+            v1_hints[hint_key] = params[param_key]
+    return xhs_factory.predict_viral_score(
+        text,
+        gene,
+        cl,
+        like_proxy_hint=like_hint,
+        baseline_v1_hints=v1_hints if v1_hints else None,
+    )
 
 
 def _run_sync_manual_result(params: dict[str, Any]) -> dict[str, Any]:

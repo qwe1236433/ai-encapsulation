@@ -54,7 +54,12 @@
 #### 3.4.1 数据与伦理
 
 - 采集工具、是否遵守平台 ToS、是否脱敏  
-- **标签定义**：公式 + 阈值 + 是否排除广告号（如何判）
+- **标签定义**：公式 + 阈值 + 是否排除广告号（如何判）  
+- **数据范围（必填，避免对外过度外推）**：  
+  - 特征行数 N；**`samples.json` 路径与 sha256**（可与 `research/runtime/features_export_provenance.json` 一致）  
+  - 若使用 digest：**`batch_id`**、**`samples.digest.json` 内 `sha256`**（与 CSV 中 `feed_digest_sha256` 一致）  
+  - **批次多样性**：表中 `batch_id` / `feed_digest_sha256` 是否**仅单一取值**——若是，结论须限定为**该次合并快照**，不写「全站 / 任意批次」泛化  
+  - **`feed_quality_metrics.json` 中 `warnings`**：若有 `single_*_snapshot` 等，须在讨论中承认局限
 
 #### 3.4.2 变量（操作化定义）
 
@@ -127,4 +132,76 @@ python research\train_baseline_v0.py --features research\features_v0.csv --out r
 3. 系数稳定后，可将对应 JSON 配入 **`XHS_FACTORY_BASELINE_JSON`**（容器内需挂载可读）；**时间外验证**仍须在报告中单独论证，勿与单次 hold-out 混淆。  
 4. 若有心得要沉淀：在 **`kb/`** 里按需加页（见 `kb/README.md`），与实验编号互链即可，**不必**与数据闭环同步「一步到位」。
 
+---
+
+## 六、已执行批次 · EXP-2026-04-13-BATCH01（合并 → digest → 特征 → v0/v1 训练）
+
+**目的**：走通「带 digest / 校验的 Feed → 特征 → 基线训练」的可审计链路；本笔输入为仓库内既有 `samples.json` 再合并（`--dedupe key`），**不等价于** MediaCrawler 全量原始 jsonl——换更大、更异质的 `--in` 后指标需重跑对照。
+
+### 6.1 Feed 与 digest
+
+| 项 | 值 |
+|----|-----|
+| 实验编号 | `EXP-2026-04-13-BATCH01` |
+| 输出 Feed | `openclaw/data/xhs-feed/samples.json` |
+| Digest | `openclaw/data/xhs-feed/samples.digest.json` |
+| `sha256`（Feed 内容） | `65d97eb793165fcc9755b935579f5e4a414b70c59421329b971d1ab2aff1c3a1` |
+| `merge_stats` | `raw_rows=40`，`dedup_drop=18`，`out=22`，`empty_drop=0` |
+
+### 6.2 复现命令（Windows PowerShell，逐条执行）
+
+```text
+cd D:\ai封装
+
+python scripts\export_to_xhs_feed.py --in openclaw\data\xhs-feed\samples.json --out openclaw\data\xhs-feed\samples.json --dedupe key --digest-out openclaw\data\xhs-feed\samples.digest.json --batch-id EXP-2026-04-13-BATCH01 --validate-mode report
+
+python scripts\export_features_v0.py --feed-digest openclaw\data\xhs-feed\samples.digest.json --verify-samples-digest --out research\features_v0.csv
+
+python scripts\verify_features_labels_spec.py --features research\features_v0.csv --labels-spec research\labels_spec.json
+
+python research\train_baseline_v0.py --features research\features_v0.csv --out research\artifacts\exp_batch_baseline_v0.json --feature-schema v0 --cv-folds 5
+
+python research\train_baseline_v0.py --features research\features_v0.csv --out research\artifacts\exp_batch_baseline_v1.json --feature-schema v1 --cv-folds 5
+```
+
+### 6.3 特征与训练产物指纹
+
+| 项 | 值 |
+|----|-----|
+| 特征表 | `research/features_v0.csv`（22 行，与 Feed 去重后条数一致） |
+| `input_features_sha256` | `31c9359c6a8fa577cba8f5fa3f0c0f8b5a35d774ece94404339a4cc583be13ac` |
+| v0 产物 | `research/artifacts/exp_batch_baseline_v0.json`（`generated_at_utc`:2026-04-16T06:27:55Z） |
+| v1 产物 | `research/artifacts/exp_batch_baseline_v1.json`（`generated_at_utc`: 2026-04-16T06:27:57Z） |
+
+### 6.4 指标摘录（同一随机种子 42，分层 hold-out `test_size=0.3`）
+
+| 模式 | `n_samples` | hold-out ROC-AUC | hold-out Brier | 5-fold CV ROC-AUC (mean±std) | 5-fold Brier (mean±std) |
+|------|-------------|------------------|----------------|------------------------------|---------------------------|
+| v0 | 22 | 1.0 | 0.00689 | 1.0 ± 0.0 | 0.00738 ± 0.00570 |
+| v1 | 22 | 1.0 | 0.00689 | 1.0 ± 0.0 | 0.00738 ± 0.00570（与 v0 数值级一致） |
+
+**解读约束**：少数类约 5、总样本 22 时，hold-out 与 CV 出现 **ROC-AUC = 1.0** 常见于小样本与可分假象；**不得**据此推断「换大数据仍成立」——需以更大 `N`、时间外或独立来源复验。
+
 *本文档随实验迭代增删；参考研究报告中的叙事不得替代本节中的实测表格。*
+
+---
+
+## 七、持续数分自动记录（evaluate_baseline_weights）
+
+> 以下条目由 `scripts/continuous-xhs-analytics.ps1` 在 **满足 digest 代数间隔**（默认每 10 次新 digest）并完成 v0/v1 权重评估后自动追加。解释约束见各 `research/artifacts/eval_*.json` 内 `interpretation_constraints`。全量词表与历史快照见 `research/analytics_history/`下 `keyword_candidates.json` / `manifest.json`；若需人工收窄关键词可改 `-TopKeywords` 或自行编辑 CLI 行。
+
+### AUTO-EVAL 2026-04-16 09:15 UTC
+- **feed digest sha256**: `7e2f332506d8db67…`（全长 64 hex）
+- **eval**: `research/artifacts/eval_auto_baseline_v0.json`
+- **n_samples**: 481; **artifact holdout ROC-AUC**: 1.0000
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=5.590, title_len=-0.145, body_len=0.044
+- **null perm AUC** (single run, n_holdout=145): 0.4956
+- **eval**: `research/artifacts/eval_auto_baseline_v1.json`
+- **n_samples**: 481; **artifact holdout ROC-AUC**: 0.9990
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=5.219, log1p_collect=1.067, log1p_share=0.217, title_len=-0.161, log1p_comment=0.131, age_days=0.085, body_len=-0.013
+- **null perm AUC** (single run, n_holdout=145): 0.5346
+
+
+<!-- AUTO_EVAL_TAIL -->

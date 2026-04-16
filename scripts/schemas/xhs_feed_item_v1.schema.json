@@ -30,6 +30,23 @@
     "emotion_tag": {
       "type": "string",
       "maxLength": 32
+    },
+    "published_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "UTC ISO8601 with Z suffix after normalize"
+    },
+    "comment_proxy": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "collect_proxy": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "share_proxy": {
+      "type": "integer",
+      "minimum": 0
     }
   },
   "additionalProperties": true

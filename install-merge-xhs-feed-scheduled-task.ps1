@@ -2,6 +2,7 @@
 <#
 .SYNOPSIS
   注册 / 卸载 Windows 计划任务：按间隔运行 scripts/merge-xhs-feed-with-log.ps1（合并爬虫 -> samples.json）。
+  日志中可能出现 merge_stats、validate_stats（默认 validate=report 时）：属正常质量报告，非错误。
 
 .PARAMETER IntervalMinutes
   重复间隔（分钟），默认 120。
@@ -69,4 +70,5 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Se
 $logPath = Join-Path $RepoRoot "logs\merge-xhs-feed.log"
 Write-Host "Registered: $TaskName (every $IntervalMinutes min)" -ForegroundColor Green
 Write-Host "Log: $logPath"
+Write-Host "提示：日志里的 validate_stats / merge_stats 为数据质量输出；若需关闭校验可在 .env 设 FLOW_API_EXPORT_VALIDATE_MODE=none 或对 merge 传 -ValidateMode none" -ForegroundColor DarkGray
 Write-Host "Uninstall: .\install-merge-xhs-feed-scheduled-task.ps1 -Uninstall"

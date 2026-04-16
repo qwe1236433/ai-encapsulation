@@ -1,0 +1,19 @@
+# Copy to keyword_seed.txt (gitignored). One keyword per line, or comma-separated.
+# Used by continuous-xhs-analytics: passed as --seed-keywords (always first in crawler list).
+#
+# --- Manual keyword screening (how to operate) ---
+# 1) After analytics writes candidates, open in editor (UTF-8):
+#    - research/keyword_candidates.json (audit: scores_top, topic_hits / ngram_hits)
+#    - research/keyword_candidates_for_cli.txt  (one line: comma-separated, what crawler uses)
+# 2) Decide KEEP vs DROP for each term. Quick rules:
+#    KEEP: matches your niche; searchable on XHS; you accept crawl volume for it.
+#    DROP: generic (e.g. 推荐/日常), other verticals, brands you do not track, sensitive/legal risk,
+#          truncated garbage (half a phrase), pure mood particles, English noise if you only want CN.
+# 3) Apply decision (pick one):
+#    A) Edit keyword_candidates_for_cli.txt: leave ONE line of approved terms only, English commas, no spaces after commas.
+#       Then run MediaCrawler (e.g. scripts/run-mediacrawler-xhs-with-suggested-keywords.ps1).
+#    B) Put must-have terms in keyword_seed.txt; remove bad terms from the CLI line as in (A).
+#       Optional: re-run suggest_keywords_from_feed with --seed-keywords from seed file so seeds stay on top.
+# 4) Never crawl with the auto line unchecked for long runs; treat the JSON line as "draft", CLI file as "approved".
+牛排熟度
+煎牛排

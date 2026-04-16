@@ -19,6 +19,19 @@ import sys
 from pathlib import Path
 
 
+def _optional_alt_threshold_from_spec(path: Path) -> int | None:
+    raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(raw, dict):
+        return None
+    v = raw.get("viral_like_threshold_alt")
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError) as e:
+        raise ValueError("viral_like_threshold_alt 须为整数") from e
+
+
 def _threshold_from_spec(path: Path) -> int:
     raw = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(raw, dict):
@@ -50,6 +63,7 @@ def main() -> int:
         return 2
     try:
         t = _threshold_from_spec(spec_path)
+        t_alt = _optional_alt_threshold_from_spec(spec_path)
     except (OSError, json.JSONDecodeError, ValueError) as e:
         print(f"读取 labels_spec 失败: {e}", flush=True)
         return 2
@@ -111,6 +125,56 @@ def main() -> int:
         print("无可用行：请确认 y_rule 已用 export_features_v0 与同一 labels_spec 导出。", flush=True)
         return 1
     print("OK: all y_rule values match labels_spec threshold rule.", flush=True)
+
+    if t_alt is not None:
+        with feat_path.open(encoding="utf-8", newline="") as fhdr:
+            hdr = csv.DictReader(fhdr).fieldnames or []
+        if "y_rule_alt" not in hdr:
+            print("labels_spec 含 viral_like_threshold_alt 但 CSV 无 y_rule_alt 列", flush=True)
+            return 1
+        mismatches_alt: list[tuple[int, int, int, int]] = []
+        checked_alt = 0
+        with feat_path.open(encoding="utf-8", newline="") as f2:
+            reader2 = csv.DictReader(f2)
+            for row_num, row in enumerate(reader2, start=2):
+                idx = row_num
+                try:
+                    ri = row.get("row_index", "")
+                    if str(ri).strip() != "":
+                        idx = int(ri)
+                except ValueError:
+                    idx = row_num
+                y_raw = str(row.get("y_rule_alt", "")).strip()
+                if y_raw == "":
+                    continue
+                try:
+                    y = int(float(y_raw))
+                except ValueError:
+                    continue
+                if y not in (0, 1):
+                    continue
+                try:
+                    lk = int(float(row.get("like_proxy", 0)))
+                except ValueError:
+                    continue
+                lk = max(0, lk)
+                expected = 1 if lk >= t_alt else 0
+                checked_alt += 1
+                if y != expected:
+                    mismatches_alt.append((idx, lk, y, expected))
+        print(
+            f"y_rule_alt: viral_like_threshold_alt={t_alt} | checked={checked_alt}",
+            flush=True,
+        )
+        if mismatches_alt:
+            print(f"y_rule_alt MISMATCH count={len(mismatches_alt)}:", flush=True)
+            for item in mismatches_alt[:50]:
+                print(f"  {item}", flush=True)
+            return 1
+        if checked_alt == 0:
+            print("WARN: y_rule_alt 无已填行（若未导出次标签可忽略）", flush=True)
+        else:
+            print("OK: all y_rule_alt values match viral_like_threshold_alt.", flush=True)
     return 0
 
 

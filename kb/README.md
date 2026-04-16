@@ -8,6 +8,18 @@
 2. **人工确认优先**：新页、改结论、补链接，默认 **你或过一眼** 再当团队共识；暂不启用「无人值守 agent 改全库」。
 3. **从小开始**：先只维护本 README + 少量索引页，避免空壳目录强迫症。
 
+## 小红书数分：科学 → 稳 → 自动化（收敛目标）
+
+**只做小红书**时，演进顺序固定为下面三层；**不跳层**（避免「自动化了但不可信」）。
+
+| 顺序 | 含义 | 落地抓手（仓库内） |
+|------|------|-------------------|
+| **1. 科学** | 口径可写清、可复现、对外结论有 **digest / provenance / warnings** | `labels_spec`、`verify_features_labels_spec`、**`features_export_provenance.json`**、`feed_quality_metrics.warnings`、**[评估与晋升基线.md](评估与晋升基线.md)** §2.1 |
+| **2. 稳** | 数据形态够支撑指标：**多轮 merge、多 digest、时间可解析、正例够门禁** | 定时 **`merge-xhs-feed`** / **`continuous-xhs-ingest -MergeOnly`**；**`FLOW_API_FEED_HEALTH_LABELS_SPEC`** 与训练同一份；`feed_ingest_health` 可选 **fail** |
+| **3. 自动化** | 在 1+2 成立的前提下加编排：**digest 触发 export → train → eval → 快照**；或 **单次一键**串全部步骤 | 长驻：**`continuous-xhs-analytics.ps1`**；单次：**`scripts/xhs-research-oneclick.ps1`**（含关键词轮换、归档、`digest_comparison_report`）；eval 规则 **`merge_mediacrawler_patch_from_eval`**；晋升仍 **人工决策**（见评估与晋升基线 §4–5） |
+
+自动化 **不** 替代：晋升基线、改契约、对外写结论——这些保持 **人过一眼**。
+
 ## 建议演进顺序（可与业务并行）
 
 | 阶段 | 做什么 | 何时开始 |

@@ -1,0 +1,25 @@
+﻿========== XHS factory export ==========
+Time: 2026-04-15 21:02:53
+task_id: 39e586c8-2899-4a9d-b7d5-2d97b6e22fca
+goal: 写一篇关于读书的如何增长认知的文章
+final_status: success
+lifecycle_phase: completed
+Poll full JSON: GET http://127.0.0.1:8080/task/39e586c8-2899-4a9d-b7d5-2d97b6e22fca
+
+[headline]
+
+
+[body]
+
+
+[hashtags]
+
+
+[image_prompt]
+
+
+[notes]
+mock predict_traffic
+
+========== end ==========
+

@@ -1,0 +1,14 @@
+{
+  "base_config": {
+    "CRAWLER_TYPE": "search",
+    "MAX_CONCURRENCY_NUM": 1,
+    "CRAWLER_MAX_SLEEP_SEC": 4,
+    "CRAWLER_MAX_NOTES_COUNT": 15,
+    "AUTO_CLOSE_BROWSER": false,
+    "LOGIN_TYPE": "qrcode",
+    "SAVE_DATA_OPTION": "jsonl"
+  },
+  "xhs_config": {
+    "SORT_TYPE": "popularity_descending"
+  }
+}

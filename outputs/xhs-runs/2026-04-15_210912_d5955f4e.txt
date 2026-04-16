@@ -1,0 +1,42 @@
+﻿========== XHS factory export ==========
+Time: 2026-04-15 21:09:12
+task_id: d5955f4e-73b3-4607-b435-12ef45bd1c5c
+goal: XHS note: side hustle review, viral title and body structure
+final_status: paused_manual
+lifecycle_phase: awaiting_manual_publish
+Poll full JSON: GET http://127.0.0.1:8080/task/d5955f4e-73b3-4607-b435-12ef45bd1c5c
+
+[headline]
+点牛排被笑话，行家完整版来了
+
+[body]
+上次在西餐厅点牛排，我说「七分熟」，服务员那个眼神我到现在都记得😓
+
+后来查了资料才知道，点错熟度真的会闹笑话。
+
+记住这个万能公式：
+
+🥩 菲力/里脊 → 三分熟（50-55°C，嫩到爆汁）
+🥩 西冷/眼肉 → 五分熟（55-60°C，肥瘦平衡）
+🥩 牛小排/腱子 → 全熟（65°C以上，软烂入味）
+
+最容易被笑话的三个点：
+❌ 点菲力七分熟——肉质变柴，等于白花钱
+❌ 问「八分熟」——根本没有这个标准
+❌ 全熟点西冷——嚼不动，牙遭罪
+
+我踩过的坑，你们别再踩了👆
+
+你平时吃几分熟？评论告诉我
+
+[hashtags]
+#牛排教程 #西餐礼仪 #点餐避坑 #行家指南
+
+[image_prompt]
+小红书竖版封面 1080x1440，主标题「点牛排被笑话，行家完整版来了」，风格偏sharp，留白清晰、对比强。
+
+[notes]
+Post manually on XHS, then call Hermes POST /task/{id}/xhs-sync with real_note_id.
+
+========== end ==========
+

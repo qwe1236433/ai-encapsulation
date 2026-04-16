@@ -1,5 +1,5 @@
 """
-从工厂用 samples.json（JSON 数组）导出研究用特征表 CSV（feature_schema v0）。
+从工厂用 samples.json（JSON 数组）导出研究用特征表 CSV（v0 核心列 + 可选 Feed v1 扩展列）。
 
 用法（仓库根目录）:
 
@@ -22,6 +22,9 @@
   --verify-samples-digest 与 --feed-digest 联用：对 --samples 文件计算 sha256，必须与 digest 内一致，否则退出（防错配）。
 
 定义见 research/schema_notes.md 与 research/EXPERIMENT_REPORT.md。
+Feed v1 扩展列（published_at、comment_proxy 等）随 samples 归一结果写出；train_baseline_v0 仍仅用 v0 数值特征列。
+
+默认可审计：写出 research/runtime/features_export_provenance.json（samples/digest 指纹与对外陈述提醒）；不需要时加 --no-provenance。
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ import hashlib
 import json
 import math
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +46,22 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _load_viral_threshold_alt_from_spec(path: Path) -> int | None:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    v = raw.get("viral_like_threshold_alt")
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def _load_viral_threshold_from_spec(path: Path) -> int | None:
@@ -143,6 +163,11 @@ def main() -> int:
         action="store_true",
         help="若已设 --feed-digest：校验 samples 文件 sha256 与 digest 一致（推荐正式实验开启）",
     )
+    ap.add_argument(
+        "--no-provenance",
+        action="store_true",
+        help="不写 research/runtime/features_export_provenance.json（默认可审计数据范围）",
+    )
     args = ap.parse_args()
     if args.verify_samples_digest and not (args.feed_digest or "").strip():
         print("错误：--verify-samples-digest 必须同时提供 --feed-digest", flush=True)
@@ -158,19 +183,27 @@ def main() -> int:
     outp.parent.mkdir(parents=True, exist_ok=True)
 
     viral_t = args.viral_threshold
+    viral_t_alt: int | None = None
+    spec_path_resolved: Path | None = None
     if viral_t is None and (args.labels_spec or "").strip():
-        spec_path = Path(args.labels_spec).expanduser().resolve()
-        if not spec_path.is_file():
-            print(f"找不到 --labels-spec 文件: {spec_path}", flush=True)
+        spec_path_resolved = Path(args.labels_spec).expanduser().resolve()
+        if not spec_path_resolved.is_file():
+            print(f"找不到 --labels-spec 文件: {spec_path_resolved}", flush=True)
             return 2
-        viral_t = _load_viral_threshold_from_spec(spec_path)
+        viral_t = _load_viral_threshold_from_spec(spec_path_resolved)
         if viral_t is None:
             print(
-                f"{spec_path} 中未找到有效的 viral_like_threshold / viral_threshold（整数）",
+                f"{spec_path_resolved} 中未找到有效的 viral_like_threshold / viral_threshold（整数）",
                 flush=True,
             )
             return 2
-        print(f"使用标签契约: {spec_path} → viral_like_threshold={viral_t}", flush=True)
+        print(f"使用标签契约: {spec_path_resolved} → viral_like_threshold={viral_t}", flush=True)
+    if (args.labels_spec or "").strip():
+        sp = spec_path_resolved or Path(args.labels_spec).expanduser().resolve()
+        if sp.is_file():
+            viral_t_alt = _load_viral_threshold_alt_from_spec(sp)
+            if viral_t_alt is not None:
+                print(f"次标签: viral_like_threshold_alt={viral_t_alt} → y_rule_alt", flush=True)
 
     digest_obj: dict[str, Any] | None = None
     if (args.feed_digest or "").strip():
@@ -215,10 +248,24 @@ def main() -> int:
         "log1p_like",
         "sop_tag",
         "emotion_tag",
+        "published_at",
+        "comment_proxy",
+        "collect_proxy",
+        "share_proxy",
         "y_rule",
+        "y_rule_alt",
         "batch_id",
         "feed_digest_sha256",
     ]
+
+    def _opt_int_cell(row: dict[str, Any], key: str) -> str:
+        v = row.get(key)
+        if v is None or v == "":
+            return ""
+        try:
+            return str(int(v))
+        except (TypeError, ValueError):
+            return ""
 
     with outp.open("w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
@@ -236,6 +283,10 @@ def main() -> int:
             y_rule = ""
             if viral_t is not None:
                 y_rule = 1 if lk >= viral_t else 0
+            y_alt = ""
+            if viral_t_alt is not None:
+                y_alt = 1 if lk >= viral_t_alt else 0
+            pa = str(r.get("published_at") or "").strip()
             w.writerow(
                 {
                     "row_index": i,
@@ -245,7 +296,12 @@ def main() -> int:
                     "log1p_like": round(math.log1p(lk), 6),
                     "sop_tag": sop,
                     "emotion_tag": emo,
+                    "published_at": pa,
+                    "comment_proxy": _opt_int_cell(r, "comment_proxy"),
+                    "collect_proxy": _opt_int_cell(r, "collect_proxy"),
+                    "share_proxy": _opt_int_cell(r, "share_proxy"),
                     "y_rule": y_rule,
+                    "y_rule_alt": y_alt,
                     "batch_id": batch_id_val,
                     "feed_digest_sha256": feed_sha,
                 }
@@ -254,6 +310,35 @@ def main() -> int:
     print(f"Wrote {len(rows)} rows -> {outp}", flush=True)
     if viral_t is None:
         print("未设置阈值（无 --viral-threshold /有效 --labels-spec）：y_rule 列为空（见 schema_notes.md）", flush=True)
+
+    if not args.no_provenance:
+        prov_path = Path("research/runtime/features_export_provenance.json").expanduser().resolve()
+        prov_path.parent.mkdir(parents=True, exist_ok=True)
+        dig_path_str = str(Path(args.feed_digest).expanduser().resolve()) if (args.feed_digest or "").strip() else None
+        spec_str = str(spec_path_resolved) if spec_path_resolved else (
+            str(Path(args.labels_spec).expanduser().resolve()) if (args.labels_spec or "").strip() else None
+        )
+        prov: dict[str, Any] = {
+            "schema": "features_export_provenance_v1",
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "samples_path": str(inp),
+            "samples_sha256": _sha256_file(inp),
+            "features_path": str(outp),
+            "feature_row_count": len(rows),
+            "labels_spec_path": spec_str,
+            "viral_like_threshold": viral_t,
+            "viral_like_threshold_alt": viral_t_alt,
+            "feed_digest_path": dig_path_str,
+            "feed_digest_sha256": feed_sha or None,
+            "batch_id_resolved": batch_id_val or None,
+            "external_claim_guard_zh": (
+                "对外结论须限定为：本表行所对应的 samples文件 sha256 与 digest（若使用）一致；"
+                "batch_id / digest 标识一次合并快照；单一批次不得外推为跨批次泛化；"
+                "详见 kb/评估与晋升基线.md「对外陈述与数据防线」。"
+            ),
+        }
+        prov_path.write_text(json.dumps(prov, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"provenance: wrote {prov_path}", flush=True)
     return 0
 
 

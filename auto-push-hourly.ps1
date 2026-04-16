@@ -1,7 +1,7 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  由计划任务按间隔触发（默认每 5 分钟）：有改动则 git add/commit，再 push 当前分支。
+  由计划任务按间隔触发（默认每 2 小时）：有改动则 git add/commit，再 push 当前分支。
 
 .NOTES
   - 依赖本机已配置好的 remote 与代理（如 SakuraCat + git http.proxy）。
@@ -21,7 +21,7 @@ $LogFile = Join-Path $LogDir "auto-push-hourly.log"
 $MaxLogLines = 2000
 
 function Write-Log([string]$msg) {
-    $line = "{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg
+    $line = ('{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg)
     if (-not (Test-Path -LiteralPath $LogDir)) {
         New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
     }

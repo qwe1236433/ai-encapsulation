@@ -1,4 +1,4 @@
-# 将当前仓库变更拉取、提交并推送到 origin（供计划任务每 N 分钟调用）。
+﻿# 将当前仓库变更拉取、提交并推送到 origin（供计划任务调用；注册脚本默认每 2 小时一次）。
 # 默认尽量「全量」同步：除 .gitignore 中密钥/会话等项外，对 bench 输出等历史被 ignore 的路径用 git add -f 纳入。
 # 仍不会提交：.env、.local/、hermes/sessions/、openclaw/data/（见 .gitignore）。
 #
@@ -21,6 +21,7 @@ $RepoPath = (Resolve-Path -LiteralPath $RepoPath).Path
 $localDir = Join-Path $RepoPath ".local"
 $lockFile = Join-Path $localDir "git-sync.lock"
 $logFile = Join-Path $localDir "git-sync.log"
+$fs = $null
 
 if (Test-Path -LiteralPath $lockFile) {
     $age = (Get-Date) - (Get-Item -LiteralPath $lockFile).LastWriteTime
@@ -30,7 +31,7 @@ if (Test-Path -LiteralPath $lockFile) {
 }
 
 function Write-Log([string]$msg) {
-    $line = "{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg
+    $line = ('{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg)
     if (-not (Test-Path -LiteralPath $localDir)) {
         New-Item -ItemType Directory -Force -Path $localDir | Out-Null
     }
@@ -151,29 +152,48 @@ try {
     }
 
     git diff --cached --quiet
-    if ($LASTEXITCODE -eq 0) {
-        Write-Log "ok: nothing to commit"
-        exit 0
+    $stagedSomething = ($LASTEXITCODE -ne 0)
+    if ($stagedSomething) {
+        $msg = ('chore(auto): sync {0:yyyy-MM-dd HH:mm:ss}' -f (Get-Date))
+        git commit -m $msg
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log "error: git commit failed"
+            exit 1
+        }
+        Write-Log "ok: committed"
+    }
+    else {
+        Write-Log "ok: nothing to commit (index clean after add)"
     }
 
-    $msg = "chore(auto): sync {0:yyyy-MM-dd HH:mm:ss}" -f (Get-Date)
-    git commit -m $msg
-    if ($LASTEXITCODE -ne 0) {
-        Write-Log "error: git commit failed"
-        exit 1
-    }
+    # 无新提交时仍可能：本地有未推送的提交，必须 push（旧逻辑此处直接 exit 导致永远不同步）
+    # 勿用管道接 Out-Null：会覆盖 $LASTEXITCODE，误判「有上游」。
+    $hasUpstream = $false
+    # 不可写字面量 '@{u}'：PowerShell 会把 @{…} 当成哈希表，导致脚本无法解析。
+    $upstreamRef = '@' + '{u}'
+    $null = git rev-parse --verify $upstreamRef 2>&1
+    if ($LASTEXITCODE -eq 0) { $hasUpstream = $true }
 
-    $pushOut = git push $Remote $branch 2>&1
+    if ($hasUpstream) {
+        $pushOut = git push $Remote $branch 2>&1
+    }
+    else {
+        Write-Log "info: no upstream yet; git push -u $Remote $branch"
+        $pushOut = git push -u $Remote $branch 2>&1
+    }
     foreach ($line in @($pushOut)) { Write-Log "$line" }
     if ($LASTEXITCODE -ne 0) {
         Write-Log "error: git push failed exit=$LASTEXITCODE"
         exit 1
     }
-    Write-Log "ok: pushed $branch"
+    Write-Log "ok: push ok $branch"
     exit 0
 }
 finally {
     $ErrorActionPreference = $prevEap
     Pop-Location
-    if ($fs) { $fs.Close(); $fs.Dispose() }
+    if ($null -ne $fs) {
+        try { $fs.Close() } catch {}
+        try { $fs.Dispose() } catch {}
+    }
 }

@@ -22,23 +22,46 @@ from typing import Any
 from openclaw.xhs_diagnose import DiagnoseResult, Suggestion
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 动作文案模板（仅存放措辞；示例由 _transform_title 基于用户原文算法生成）
+# 动作文案（仅"该做什么"的说明；示例一律基于用户原文算法生成，无任何硬编码范例）
 # ─────────────────────────────────────────────────────────────────────────────
-_ACTION_TEMPLATES: dict[str, dict[str, str]] = {
+_ACTION_DESC: dict[str, str] = {
+    "REMOVE_TITLE_QUESTION_MARK":
+        "删除标题中的所有问号（「？」「?」），改写成陈述句或感叹句",
+    "ADD_ONE_TITLE_EMOJI":
+        "在标题开头加入 1 个情绪 emoji（候选池：🔥 / 💪 / ✨ / 😍 / 🌱 / 🎯 等，按你的内容调性自选）",
+    "REDUCE_TITLE_HASHTAG_TO_ONE":
+        "把标题里多余的 hashtag 移到正文，只保留 1 个最相关的",
+}
+
+# 博主视图用的"人话版" action 名与"为什么"——完全不提 coef / CI / AUC / pp。
+_BLOGGER_ACTION: dict[str, dict[str, str]] = {
     "REMOVE_TITLE_QUESTION_MARK": {
-        "action": "删除标题中的所有问号（「？」「?」），改写成陈述句或感叹句",
-        "fallback_before": "减脂餐真的能瘦吗？",
-        "fallback_after":  "减脂餐吃一个月，我瘦了 15 斤！",
+        "headline": "标题去掉问号",
+        "why_template": (
+            "标题带问号让读者觉得是「疑问/不确定」，划走率更高。"
+            "我们看的健身/减脂赛道里，**每 10 条「{a_label}」的笔记，大约只有 {a_hit} 条能上热门；"
+            "「{b_label}」的能到 {b_hit} 条**。差的那 {diff_hit} 条在长期会累积。"
+        ),
+        "how": "末尾的问号直接删；中间的问号换成句号。换成感叹号也行，只要别保留疑问语气。",
     },
     "ADD_ONE_TITLE_EMOJI": {
-        "action": "在标题开头加入 1 个情绪 emoji（例：🔥 💪 ✨ 😍）",
-        "fallback_before": "减脂餐吃一个月，我瘦了 15 斤",
-        "fallback_after":  "🔥 减脂餐吃一个月，我瘦了 15 斤",
+        "headline": "标题加 1 个 emoji",
+        "why_template": (
+            "emoji 让标题在密集的信息流里更跳眼。"
+            "我们的数据里，**每 10 条「{a_label}」的笔记，大约只有 {a_hit} 条上热门；"
+            "「{b_label}」的能到 {b_hit} 条**。"
+            "⚠ 注意：0→1 的差别明显，1→2 基本没差——**有 1 个就够，不用堆**。"
+        ),
+        "how": "在标题最前面放一个 emoji 就行。放哪里不重要，放了就有效。",
     },
     "REDUCE_TITLE_HASHTAG_TO_ONE": {
-        "action": "把标题里多余的 hashtag 移到正文，只保留 1 个最相关的",
-        "fallback_before": "#减肥 #减脂餐 #健身打卡 今日 160 卡减脂餐",
-        "fallback_after":  "#减肥 今日 160 卡减脂餐（其它话题搬到正文）",
+        "headline": "标题只留 1 个 hashtag",
+        "why_template": (
+            "标题塞多个 #xx 让读者觉得「这是硬推/广告」，划走率高。"
+            "数据里，**每 10 条「{a_label}」的笔记，大约只有 {a_hit} 条上热门；"
+            "「{b_label}」的能到 {b_hit} 条**——差距很明显。"
+        ),
+        "how": "只保留最相关的 1 个，其它全部搬到正文末尾（正文里的 hashtag 不会让标题显得像广告）。",
     },
 }
 
@@ -48,8 +71,31 @@ _SEVERITY_EMOJI: dict[str, str] = {
     "info":   "🟡 参考信息",
 }
 
-_DEFAULT_EMOJI = "🔥"
+# ADD_ONE_TITLE_EMOJI 的候选池
+_EMOJI_POOL: tuple[str, ...] = ("🔥", "💪", "✨", "😍", "🌱", "🎯")
 _HASHTAG_RE = re.compile(r"#[^\s#＃]+")
+
+# 按标题关键词挑一个语气匹配的 emoji；都不命中时再按哈希稳定 fallback。
+# 关键词顺序很重要：越靠前的语气越"强"，优先命中。
+_EMOJI_THEME_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("亲测", "真的", "绝了", "绝绝子", "爆", "太好用", "好绝"), "🔥"),
+    (("练", "撸铁", "运动", "燃脂", "坚持", "深蹲", "瑜伽", "汗"), "💪"),
+    (("瘦", "减脂", "减肥", "体重", "掉秤", "斤"), "😍"),
+    (("教程", "方法", "步骤", "指南", "技巧", "攻略", "保姆级", "干货"), "🎯"),
+    (("分享", "记录", "日记", "经验", "心得", "复盘", "盘点"), "✨"),
+)
+
+
+def _pick_emoji_for(title: str) -> str:
+    """按标题语气匹配 emoji；无命中回退到基于哈希的稳定选择。
+    不同标题 → 不同 emoji，同一标题多次渲染保持一致。"""
+    if not title:
+        return _EMOJI_POOL[0]
+    for keywords, emoji in _EMOJI_THEME_RULES:
+        if any(k in title for k in keywords):
+            return emoji
+    idx = sum(ord(c) for c in title) % len(_EMOJI_POOL)
+    return _EMOJI_POOL[idx]
 
 
 def _transform_title(action_code: str, title: str, user_state: dict[str, Any]) -> tuple[str, str] | None:
@@ -73,8 +119,8 @@ def _transform_title(action_code: str, title: str, user_state: dict[str, Any]) -
         return (original, stripped)
 
     if action_code == "ADD_ONE_TITLE_EMOJI":
-        # 在开头加一个 emoji；如果开头已有空白先 trim
-        after = f"{_DEFAULT_EMOJI} {original}"
+        picked = _pick_emoji_for(original)
+        after = f"{picked} {original}"
         return (original, after)
 
     if action_code == "REDUCE_TITLE_HASHTAG_TO_ONE":
@@ -153,8 +199,7 @@ def _render_coefficient_block(coef: dict[str, Any] | None) -> list[str]:
 
 
 def _render_suggestion(s: Suggestion, original_title: str) -> list[str]:
-    tmpl = _ACTION_TEMPLATES.get(s.action_code, {})
-    action = tmpl.get("action", "（未定义动作模板）")
+    action = _ACTION_DESC.get(s.action_code, "（未定义动作）")
 
     lines: list[str] = []
     sev_tag = _SEVERITY_EMOJI.get(s.severity, s.severity)
@@ -173,20 +218,19 @@ def _render_suggestion(s: Suggestion, original_title: str) -> list[str]:
         for cav in s.caveats:
             lines.append(f"  - ⚠ {cav}")
 
-    # 2) 基于用户原标题的算法变换示例；失败时回退到通用示例
+    # 2) 基于用户原标题的算法变换示例；
+    #   不再有 fallback 模板——原标题为空或算法无法变换时，直接省掉示例段落。
     transform = _transform_title(s.action_code, original_title, s.user_state or {})
     if transform is not None:
         before, after = transform
-        lines.append("  - **针对你标题的改写建议**（算法生成，仅供参考）：")
+        note = (
+            "算法生成自你原标题；emoji 可从候选池自选"
+            if s.action_code == "ADD_ONE_TITLE_EMOJI"
+            else "基于你原标题算法生成"
+        )
+        lines.append(f"  - **改写示例**（{note}）：")
         lines.append(f"    - 原：`{before}`")
         lines.append(f"    - 改：`{after}`")
-    else:
-        fb_before = tmpl.get("fallback_before")
-        fb_after = tmpl.get("fallback_after")
-        if fb_before and fb_after:
-            lines.append("  - **示例（通用模板，仅作风格参考）**：")
-            lines.append(f"    - 原：`{fb_before}`")
-            lines.append(f"    - 改：`{fb_after}`")
 
     lines.append("")
     return lines
@@ -202,9 +246,152 @@ def _render_info_note(note: dict[str, Any]) -> list[str]:
     ]
 
 
-def render_markdown(result: DiagnoseResult) -> str:
+def render_markdown(result: DiagnoseResult, audience: str = "blogger") -> str:
+    """
+    audience:
+      - "blogger"（默认）：面向博主的人话报告，不含 CI/系数/AUC 等术语
+      - "dev"：面向开发者/研究者的完整学术版，保留全部统计细节
+    """
+    if audience == "dev":
+        return _render_dev_view(result)
+    return _render_blogger_view(result)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 博主视图（默认）
+# ─────────────────────────────────────────────────────────────────────────────
+def _rate_to_hits_out_of_10(rate: float) -> int:
+    """把比例转成「10 条里大约 X 条」的整数。夹紧到 [0, 10]。"""
+    x = round(rate * 10)
+    return max(0, min(10, int(x)))
+
+
+def _blogger_why(action_code: str, desc: dict[str, Any]) -> str | None:
+    """把 descriptive.group_a/b 的 rate 翻译成人话。
+    - group_a 是「不推荐的那种写法」（带问号 / 无 emoji / 多 hashtag）
+    - group_b 是「推荐的那种写法」
+    返回 None 表示无法生成（desc 缺字段），交给调用方省略。
+    """
+    tpl = _BLOGGER_ACTION.get(action_code, {}).get("why_template")
+    if not tpl or desc.get("type") != "historical_ratio_diff":
+        return None
+    a = desc.get("group_a")
+    b = desc.get("group_b")
+    if not a or not b:
+        return None
+    a_hit = _rate_to_hits_out_of_10(a.get("rate", 0.0))
+    b_hit = _rate_to_hits_out_of_10(b.get("rate", 0.0))
+    return tpl.format(
+        a_label=a["label"],
+        b_label=b["label"],
+        a_hit=a_hit,
+        b_hit=b_hit,
+        diff_hit=abs(b_hit - a_hit),
+    )
+
+
+def _render_blogger_suggestion(s: Suggestion, idx: int, original_title: str) -> list[str]:
+    meta = _BLOGGER_ACTION.get(s.action_code)
+    if not meta:
+        # 未知 action_code，退回开发者格式以免信息丢失
+        return _render_suggestion(s, original_title)
+
     lines: list[str] = []
-    lines.append("# 小红书笔记诊断报告")
+    lines.append(f"### 建议 {idx}：{meta['headline']}")
+    lines.append("")
+
+    # 你当前的情况（尽量具体）
+    human = (s.user_state or {}).get("human") or ""
+    # engine 里的 human 字符串本身以 "你当前…" 开头，这里换个标签避免重复
+    human = human.strip()
+    if human.startswith("你当前"):
+        human = human[len("你当前"):].lstrip("的 ，:：")
+    if human:
+        lines.append(f"**现状**：{human}")
+        lines.append("")
+
+    # 为什么
+    why = _blogger_why(s.action_code, s.descriptive)
+    if why:
+        lines.append(f"**为什么**：{why}")
+        lines.append("")
+
+    # 怎么改（先给人话说明，再给基于你原标题的 before/after）
+    lines.append(f"**怎么改**：{meta['how']}")
+    lines.append("")
+
+    transform = _transform_title(s.action_code, original_title, s.user_state or {})
+    if transform is not None:
+        before, after = transform
+        lines.append("原：")
+        lines.append(f"> `{before}`")
+        lines.append("")
+        lines.append("改成：")
+        lines.append(f"> `{after}`")
+        lines.append("")
+        if s.action_code == "ADD_ONE_TITLE_EMOJI":
+            lines.append("（上面的 emoji 是按你标题语气挑的，你也可以换成 💪 🔥 ✨ 😍 🌱 🎯 中任意一个。）")
+            lines.append("")
+
+    return lines
+
+
+def _render_blogger_view(result: DiagnoseResult) -> str:
+    original_title = (result.original_input or {}).get("title", "")
+    lines: list[str] = []
+
+    # 头部：一句话说清这是啥、给谁看的
+    lines.append("# 你的笔记诊断")
+    lines.append("")
+    if original_title:
+        safe_title = original_title.replace("`", "ˋ")
+        lines.append(f"**你的标题**：`{safe_title}`")
+        lines.append("")
+
+    # 总览行：几条建议
+    n_sugg = len(result.suggestions)
+    if n_sugg == 0:
+        lines.append("✅ **在我们关注的 3 个维度上（标题问号 / emoji / hashtag 数量），你都没踩坑。**")
+        lines.append("")
+        lines.append("> 注意：这不代表这条笔记一定会爆；只代表**标题的 3 个已知易扑街点**都没中。正文好不好、选题对不对，这个工具看不出来。")
+        lines.append("")
+    elif n_sugg == 1:
+        lines.append(f"工具看你的标题后，给你 **1 条** 建议。")
+        lines.append("")
+    else:
+        lines.append(f"工具看你的标题后，给你 **{n_sugg} 条** 建议，按下面编号往下改。")
+        lines.append("")
+
+    # 建议正文
+    for i, s in enumerate(result.suggestions, start=1):
+        lines.extend(_render_blogger_suggestion(s, i, original_title))
+
+    # 博主视图有意不显示 info_notes：
+    #   - 它们是"弱到不建议行动"的信号（如 body_len 系数 +0.0021/字）
+    #   - 含有博主看不懂的措辞；强行翻译成人话的性价比低
+    #   - 开发者视图仍保留，研究者可以通过 --view dev 查看
+
+    # 边界声明：3 行，不再有 AUC / hold-out / 线性独立 这些术语
+    lines.append("---")
+    lines.append("")
+    lines.append("### 使用边界（30 秒）")
+    lines.append("")
+    lines.append("1. 这个工具**只检查标题的 3 件事**：有没有问号、有没有 emoji、hashtag 数量。"
+                 "内容好不好、选题对不对，它看不出来。")
+    lines.append("2. 数据来自 **700+ 篇健身/减脂赛道**笔记。其他赛道（穿搭/美妆/美食等）参考价值有限。")
+    lines.append("3. **这不是爆款预测工具**——它只帮你避开 3 个已知容易扑街的小坑。"
+                 "改了也不保证涨流量，改了之后是否有效请你自己记录。")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 开发者视图（保留原始学术版；带 CI / 系数 / AUC 等）
+# ─────────────────────────────────────────────────────────────────────────────
+def _render_dev_view(result: DiagnoseResult) -> str:
+    lines: list[str] = []
+    lines.append("# 小红书笔记诊断报告（开发者视图）")
     lines.append("")
     lines.append(f"> **引擎版本**：`{result.version}`")
     lines.append(f"> **依据模型**：`{result.model_ref}`")
@@ -213,13 +400,11 @@ def render_markdown(result: DiagnoseResult) -> str:
     lines.append(f"> ⚠ **使用范围**：{result.vertical_notice}")
     lines.append("")
 
-    # 提取输入摘要 + 原标题回显（让用户一眼知道"这是在分析我的内容"）
     f = result.input_features
     original_title = (result.original_input or {}).get("title", "")
     lines.append("## 输入摘要")
     lines.append("")
     if original_title:
-        # 转义反引号，避免标题里含 ` 破坏排版
         safe_title = original_title.replace("`", "ˋ")
         lines.append(f"- **你的标题**：`{safe_title}`")
     lines.append(
@@ -232,7 +417,6 @@ def render_markdown(result: DiagnoseResult) -> str:
     )
     lines.append("")
 
-    # 建议区
     if result.suggestions:
         lines.append("## 建议列表")
         lines.append("")
@@ -245,14 +429,12 @@ def render_markdown(result: DiagnoseResult) -> str:
                      "仅说明在 2 条强规则上没有扣分项。")
         lines.append("")
 
-    # 信息区
     if result.info_notes:
         lines.append("## 参考信息")
         lines.append("")
         for n in result.info_notes:
             lines.extend(_render_info_note(n))
 
-    # 免责声明
     lines.append("---")
     lines.append("")
     lines.append("### ⚠ 使用边界（务必阅读）")

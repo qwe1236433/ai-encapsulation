@@ -6,6 +6,9 @@
       "env": {
         "XHS_ENABLE_LOGGING": "false"
       }
+    },
+    "lean-ctx": {
+      "command": "lean-ctx"
     }
   }
 }

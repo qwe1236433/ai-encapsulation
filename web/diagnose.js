@@ -49,12 +49,11 @@
     };
 
     function inline(s) {
-      // code span
-      s = s.replace(/`([^`]+)`/g, (_, c) => `<code>${escapeHtml(c)}</code>`);
-      // bold
+      // 注意：传进来的 s 在 for 循环里已经被 escapeHtml 过，这里不再二次 escape
+      // code span：`xxx` → <code>xxx</code>；xxx 保持已转义状态即可
+      s = s.replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`);
+      // bold：**xxx** → <strong>xxx</strong>；xxx 也已转义过
       s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-      // 行内的 &amp; 等已在 escapeHtml 处理外的其余字符：粗暴转义"<"避免攻击
-      // 上面 code 的替换器已用 escapeHtml，其余文本我们假设来自诊断引擎本身（可信）
       return s;
     }
 

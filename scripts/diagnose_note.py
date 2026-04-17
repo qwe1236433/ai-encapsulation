@@ -51,6 +51,12 @@ def main() -> int:
     ap.add_argument("--sop-tag", default="", help="可选：tutorial | review | story | list")
     ap.add_argument("--emotion-tag", default="", help="可选：positive | negative | mixed")
     ap.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    ap.add_argument(
+        "--view",
+        choices=["blogger", "dev"],
+        default="blogger",
+        help="blogger=博主友好人话版（默认）；dev=开发者视图，保留 CI/系数/AUC 等细节",
+    )
     ap.add_argument("--out", help="输出文件路径；缺省则打印到 stdout")
     args = ap.parse_args()
 
@@ -75,7 +81,7 @@ def main() -> int:
     if args.format == "json":
         payload = json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
     else:
-        payload = render_markdown(result)
+        payload = render_markdown(result, audience=args.view)
 
     if args.out:
         out_path = Path(args.out).resolve()

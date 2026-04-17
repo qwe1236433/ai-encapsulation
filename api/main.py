@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -418,6 +418,10 @@ class DiagnoseNoteBody(BaseModel):
     sop_tag: str = Field(default="", description="可选：tutorial | review | story | list")
     emotion_tag: str = Field(default="", description="可选：positive | negative | mixed")
     return_markdown: bool = Field(default=True, description="是否在响应中包含渲染好的 Markdown")
+    view: str = Field(
+        default="blogger",
+        description="blogger=博主友好人话版（默认）；dev=开发者视图，保留 CI/系数/AUC 等细节",
+    )
 
 
 def _resolve_repo_path(rel_or_abs: str) -> Path:
@@ -594,19 +598,28 @@ def api_diagnose_note(body: DiagnoseNoteBody) -> dict[str, Any]:
         sop_tag=body.sop_tag,
         emotion_tag=body.emotion_tag,
     )
-    md = render_markdown(result) if body.return_markdown else None
+    md = render_markdown(result, audience=body.view) if body.return_markdown else None
 
     if _diagnose_log_enabled():
-        _append_diagnose_log({
-            "ts_utc": datetime.utcnow().isoformat() + "Z",
-            "request_id": str(uuid.uuid4()),
-            "title_len": len(body.title or ""),
-            "body_len": len(body.body or ""),
-            "sop_tag": body.sop_tag,
-            "emotion_tag": body.emotion_tag,
-            "suggestion_codes": [s["action_code"] for s in result.to_dict()["suggestions"]],
-            "input_features": result.input_features,
-        })
+        # 日志路径对业务完全透明：构造 entry 可能因未来 schema 变动抛异常，
+        # 这里兜底吞掉，绝不让诊断请求因为"写日志"而 500。
+        try:
+            log_entry = {
+                "ts_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "request_id": str(uuid.uuid4()),
+                "title_len": len(body.title or ""),
+                "body_len": len(body.body or ""),
+                "sop_tag": body.sop_tag,
+                "emotion_tag": body.emotion_tag,
+                "suggestion_codes": [
+                    s.get("action_code", "")
+                    for s in (result.to_dict().get("suggestions") or [])
+                ],
+                "input_features": result.input_features,
+            }
+            _append_diagnose_log(log_entry)
+        except Exception:  # noqa: BLE001 - 日志失败不回传给用户
+            pass
 
     return {
         "result": result.to_dict(),

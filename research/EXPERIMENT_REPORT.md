@@ -242,6 +242,73 @@ python research\train_baseline_v0.py --features research\features_v2.csv --featu
 
 ---
 
+## 6.6 v2 公式反向验证（2026-04-17）：可行性判决
+
+> 配套脚本 `research/validate_formula_v2.py`，产物 `research/artifacts/formula_validation_v2.json`。
+> 同时 OpenClaw 已扩展 `xhs_factory._baseline_lr_logistic_p` 支持 `feature_schema_v2`，并通过
+> `research/runtime/factory_baseline.env` 把 `XHS_FACTORY_BASELINE_JSON` 切到 `baseline_v2_time.json`（重启 API 后生效）。
+
+### 验证设计（四项独立检验）
+1. **Bootstrap 系数 95% CI**（n=200 次有放回采样，全样本）：CI 不跨 0 且同号率 ≥ 95% 才算 STABLE。
+2. **precision@K**（时间外 70/30 split）：top-{5/10/20/30}% 的实际命中率与 base rate 的 lift。
+3. **时间分段稳定性**（按 `published_at` 等分 4 段，每段独立训练）：跨段符号一致率 ≥ 75% 才算 STABLE。
+4. **特征剔除消融**（80% 系数最大的 8 个，分层 70/30）：依次去除单特征看 hold-out AUC 跌落量。
+
+### 实测结果（2026-04-17，n=741，**y=1 占比 84.2%**，base rate 时间外 = 77.83%）
+
+**Bootstrap 通过的 STABLE 特征（仅 3/19）：**
+
+| 特征 | 系数均值 | 95% CI | 同号率 | 解读 |
+|---|---:|---|---:|---|
+| `title_has_question` | **−1.04** | [−1.60, −0.36] | 99.5% | **标题带问号显著降低高赞概率**（与"提问体涨粉"民间偏方相反） |
+| `title_emoji_count` | **+0.49** | [+0.14, +0.89] | 100% | **标题 emoji 越多概率越高**（强稳定正向） |
+| `body_len` | +0.0021 | [+0.0001, +0.0049] | 98% | 正文越长**微弱**正向（系数级别极小） |
+
+**时间分段（4 段全部参与）跨段符号 100% 一致的核心三：**
+- `title_has_question`（负向）、`title_emoji_count`（正向）、`body_char_diversity`（正向）
+
+**precision@K**（hold-out AUC = 0.532）：
+
+| top% | k | precision | base | lift |
+|---|---:|---:|---:|---:|
+| 5% | 11 | 72.7% | 77.8% | **0.93x（比随机还差）** |
+| 10% | 22 | 86.4% | 77.8% | 1.11x |
+| 20% | 44 | 81.8% | 77.8% | 1.05x |
+| 30% | 66 | 81.8% | 77.8% | 1.05x |
+
+**消融**（基线 AUC 0.5751）：剔除 `title_emoji_count` 跌 0.031（最大贡献），剔除 `title_has_question` 跌 0.023；
+**剔除 `title_hashtag_count` AUC 反升 0.044** —— 这个特征对模型有害，下版本应弃用。
+
+### 公式可行性判决：**INSUFFICIENT**
+- top-K lift 仅 1.11x，且 top-5% 居然低于 base rate；**模型不能用作生产排序工具**。
+- 但找到了 2 条**统计显著且跨时间段稳定**的「内容写作 hint」（不是排序公式，而是单边建议）：
+  - **少在标题用问号**（−1.04，CI 不跨 0）
+  - **多在标题加 emoji**（+0.49，CI 不跨 0）
+- 这两条可作为 Hermes Think 阶段的硬约束 / Verify 阶段的扣分项写进 SOP，而**不应**期待加入它们就能"刷出爆款"。
+
+### 数据层面的真问题
+- **数据极不平衡（84.2% 阳性）**：`viral_like_threshold=1000` 在当前抓到的样本里太低，绝大多数都是"高赞"。
+  → 解决方案：(a) 把阈值改到 P75/P90 分位（如 5000）让正负更均衡；(b) 主动抓「关键词×低赞」样本作负样本池。
+- **样本同质（健身/减脂赛道高度集中）**：跨赛道泛化能力未知；下一批应在 3+ 赛道分别采 ≥ 200 条。
+- **缺账号特征**：粉丝量、历史均赞、历史命中率这些**最强的高赞预测因子**完全没进特征。
+
+### 下一步可执行清单（按 ROI 排序）
+1. **调阈值** `viral_like_threshold` 到样本 P75，重训 v2，看 AUC 能不能回到 0.6+；
+2. **加账号侧特征**（`author_fan_count`, `author_avg_like_30d`, `author_hit_rate_30d`），形成 v3；
+3. **Hermes/Verify 集成两条稳定 hint**：标题问号扣分、标题 emoji 加分（系数权重直接来自 baseline_v2_time.json）；
+4. **A/B 验证**：分两批共 30 条文案（1 批合规、1 批违规），实际发布 7 天后回收 like，看是否真的有显著差异——这才是「公式」唯一的终极检验。
+
+### 复现命令
+```powershell
+python research\validate_formula_v2.py `
+  --features research\features_v2.csv `
+  --baseline research\artifacts\baseline_v2_time.json `
+  --out research\artifacts\formula_validation_v2.json `
+  --bootstrap 200 --time-segments 4
+```
+
+---
+
 ## 七、持续数分自动记录（evaluate_baseline_weights）
 
 > 以下条目由 `scripts/continuous-xhs-analytics.ps1` 在 **满足 digest 代数间隔**（默认每 10 次新 digest）并完成 v0/v1 权重评估后自动追加。解释约束见各 `research/artifacts/eval_*.json` 内 `interpretation_constraints`。全量词表与历史快照见 `research/analytics_history/`下 `keyword_candidates.json` / `manifest.json`；若需人工收窄关键词可改 `-TopKeywords` 或自行编辑 CLI 行。

@@ -56,3 +56,8 @@ research/runtime/
 research/labels_spec.json
 research/keyword_seed.txt
 research/keyword_rotation_pool.txt
+
+# 种子用户运营本地档案（含账号/真实反馈，勿提交）
+docs/seed_candidates.md
+docs/seed_outreach_log.md
+docs/seed_feedback.md

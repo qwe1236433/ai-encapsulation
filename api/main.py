@@ -27,6 +27,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+# 让 openclaw/ 内裸导入（如 xhs_factory 里的 `from minimax_client import ...`）能找到模块；
+# /api/diagnose/note 首次被命中时会触发 import openclaw.xhs_diagnose → xhs_factory 链
+_openclaw_dir = str((REPO_ROOT / "openclaw").resolve())
+if _openclaw_dir not in sys.path:
+    sys.path.insert(0, _openclaw_dir)
+_repo_root_str = str(REPO_ROOT)
+if _repo_root_str not in sys.path:
+    sys.path.insert(0, _repo_root_str)
 load_dotenv(REPO_ROOT / ".env")
 # continuous-xhs-analytics.ps1 写入；仅含 XHS_FACTORY_BASELINE_JSON 等少量键，override只覆盖这些键
 _factory_env = REPO_ROOT / "research" / "runtime" / "factory_baseline.env"
@@ -399,6 +407,19 @@ class ModelEvaluateBody(BaseModel):
     allow_mixed_batch: bool = Field(default=False, description="对应 train_baseline --allow-mixed-batch")
 
 
+class DiagnoseNoteBody(BaseModel):
+    """
+    L3 诊断：对一篇用户手动粘贴的小红书笔记（title + body）输出写作级修改建议。
+    绝不做链接解析/服务端爬取；sop_tag / emotion_tag 为可选元数据。
+    """
+
+    title: str = Field(default="", description="笔记标题（用户自行粘贴）")
+    body: str = Field(default="", description="笔记正文（用户自行粘贴）")
+    sop_tag: str = Field(default="", description="可选：tutorial | review | story | list")
+    emotion_tag: str = Field(default="", description="可选：positive | negative | mixed")
+    return_markdown: bool = Field(default=True, description="是否在响应中包含渲染好的 Markdown")
+
+
 def _resolve_repo_path(rel_or_abs: str) -> Path:
     p = Path(rel_or_abs).expanduser()
     return p.resolve() if p.is_absolute() else (REPO_ROOT / p).resolve()
@@ -523,6 +544,74 @@ def api_model_evaluate(body: ModelEvaluateBody) -> dict[str, Any]:
         "features_provenance": raw.get("features_provenance"),
         "generated_at_utc": raw.get("generated_at_utc"),
         "labels_spec_path": raw.get("labels_spec_path"),
+    }
+
+
+_diagnose_log_lock = threading.Lock()
+
+
+def _diagnose_log_enabled() -> bool:
+    """opt-in 诊断日志开关：FLOW_API_DIAGNOSE_LOG=1 时把脱敏后的诊断摘要落盘。"""
+    return (os.environ.get("FLOW_API_DIAGNOSE_LOG") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _append_diagnose_log(entry: dict[str, Any]) -> None:
+    """写入 research/runtime/diagnose_log.jsonl；失败静默（不阻塞请求）。"""
+    try:
+        log_dir = REPO_ROOT / "research" / "runtime"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "diagnose_log.jsonl"
+        line = json.dumps(entry, ensure_ascii=False)
+        with _diagnose_log_lock, open(log_path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+@app.post("/api/diagnose/note")
+def api_diagnose_note(body: DiagnoseNoteBody) -> dict[str, Any]:
+    """
+    对用户粘贴的一篇小红书笔记做 L3 写作级诊断。
+    绝不做链接解析或服务端爬取；输入 title+body 必须由客户端提供。
+
+    返回字段：
+      - result        : 结构化诊断（DiagnoseResult.to_dict()）
+      - markdown      : 渲染好的 Markdown（return_markdown=false 时为 null）
+      - trigger_count : 本次触发的建议数（便于前端展示）
+    """
+    if not (body.title or body.body).strip():
+        raise HTTPException(status_code=400, detail="title 和 body 不能都为空；请粘贴笔记内容")
+
+    try:
+        from openclaw.xhs_diagnose import diagnose
+        from openclaw.xhs_diagnose_renderer import render_markdown
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"诊断引擎加载失败: {e}") from e
+
+    result = diagnose(
+        title=body.title,
+        body=body.body,
+        sop_tag=body.sop_tag,
+        emotion_tag=body.emotion_tag,
+    )
+    md = render_markdown(result) if body.return_markdown else None
+
+    if _diagnose_log_enabled():
+        _append_diagnose_log({
+            "ts_utc": datetime.utcnow().isoformat() + "Z",
+            "request_id": str(uuid.uuid4()),
+            "title_len": len(body.title or ""),
+            "body_len": len(body.body or ""),
+            "sop_tag": body.sop_tag,
+            "emotion_tag": body.emotion_tag,
+            "suggestion_codes": [s["action_code"] for s in result.to_dict()["suggestions"]],
+            "input_features": result.input_features,
+        })
+
+    return {
+        "result": result.to_dict(),
+        "markdown": md,
+        "trigger_count": len(result.suggestions),
     }
 
 

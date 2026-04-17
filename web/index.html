@@ -152,6 +152,82 @@
       resize: vertical;
     }
     textarea#input-goal-text::placeholder { color: var(--muted); opacity: 0.85; }
+    /* ── 诊断卡片专属 ───────────────────────────────────────────────── */
+    .diag-warn {
+      font-size: 0.82rem;
+      color: var(--warn);
+      background: rgba(201, 162, 39, 0.08);
+      border: 1px solid rgba(201, 162, 39, 0.35);
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      margin-bottom: 0.65rem;
+      line-height: 1.45;
+    }
+    textarea.diag-input, input.diag-input {
+      width: 100%;
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.5rem 0.65rem;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 0.9rem;
+      line-height: 1.5;
+      resize: vertical;
+    }
+    textarea.diag-input { min-height: 5rem; }
+    .diag-meta {
+      display: flex; gap: 1rem; flex-wrap: wrap;
+      font-size: 0.82rem; color: var(--muted);
+      margin: 0.5rem 0;
+    }
+    .diag-meta .pill {
+      padding: 0.18rem 0.55rem;
+      border-radius: 999px;
+      background: rgba(91,159,212,0.12);
+      border: 1px solid rgba(91,159,212,0.3);
+    }
+    .diag-meta .pill.high { background: rgba(217,107,107,0.15); border-color: rgba(217,107,107,0.45); color: #f2a9a9; }
+    .diag-meta .pill.med  { background: rgba(91,159,212,0.15); border-color: rgba(91,159,212,0.45); color: #a5c9e2; }
+    .diag-meta .pill.info { background: rgba(201,162,39,0.15);  border-color: rgba(201,162,39,0.45);  color: #e2c682; }
+    .diag-meta .pill.ok   { background: rgba(61,158,110,0.15);  border-color: rgba(61,158,110,0.45);  color: #8fd6b4; }
+    #diag-rendered {
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.9rem 1.1rem;
+      margin-top: 0.5rem;
+      max-height: 560px;
+      overflow: auto;
+      font-size: 0.88rem;
+      line-height: 1.55;
+    }
+    #diag-rendered h1, #diag-rendered h2, #diag-rendered h3 {
+      margin: 0.9em 0 0.4em;
+      line-height: 1.25;
+    }
+    #diag-rendered h1 { font-size: 1.05rem; }
+    #diag-rendered h2 { font-size: 0.95rem; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; }
+    #diag-rendered h3 { font-size: 0.92rem; }
+    #diag-rendered ul { padding-left: 1.35rem; margin: 0.35rem 0; }
+    #diag-rendered li { margin: 0.25rem 0; }
+    #diag-rendered blockquote {
+      border-left: 3px solid var(--accent);
+      margin: 0.55rem 0;
+      padding: 0.1rem 0.85rem;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    #diag-rendered code {
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: 0.82rem;
+      background: rgba(0,0,0,0.35);
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+    }
+    #diag-rendered strong { color: var(--text); }
+    #diag-rendered hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
+    #diag-msg { color: var(--err); min-height: 1.2em; font-size: 0.85rem; margin: 0.35rem 0; }
   </style>
 </head>
 <body>
@@ -206,6 +282,27 @@
     </div>
 
     <div class="card">
+      <h2>笔记诊断（L3 写作级提示）</h2>
+      <div class="diag-warn">
+        ⚠ 基于健身/减脂赛道 ~741 篇数据训练，<strong>仅输出写作级提示，不承诺流量</strong>。
+        模型时间外 AUC≈0.53，不具备爆款预测能力。跨赛道使用参考价值有限。
+        <br />本工具 <strong>不做链接解析</strong>：请粘贴你自己的笔记标题与正文。
+      </div>
+      <label class="block-label" for="diag-title">标题</label>
+      <input type="text" class="diag-input" id="diag-title" placeholder="粘贴你的笔记标题，例如：减脂餐吃一个月我瘦了15斤" />
+      <label class="block-label" for="diag-body" style="margin-top:0.65rem;">正文</label>
+      <textarea class="diag-input" id="diag-body" placeholder="粘贴你的笔记正文（多段也可以）"></textarea>
+      <div class="row" style="margin-top:0.75rem;">
+        <button type="button" class="primary" id="btn-diagnose">开始诊断</button>
+        <button type="button" class="secondary" id="btn-diag-clear">清空</button>
+        <button type="button" class="secondary" id="btn-diag-copy">复制 Markdown</button>
+      </div>
+      <div id="diag-msg"></div>
+      <div id="diag-summary" class="diag-meta" style="display:none;"></div>
+      <div id="diag-rendered" style="display:none;"></div>
+    </div>
+
+    <div class="card">
       <h2>最新导出 TXT</h2>
       <div class="row">
         <button type="button" class="secondary" id="btn-latest">刷新预览</button>
@@ -223,6 +320,7 @@
     </div>
   </div>
   <script src="/app.js"></script>
+  <script src="/diagnose.js"></script>
   <script>
     (function () {
       fetch("/api/config")

@@ -79,6 +79,28 @@ _V1_FEAT: tuple[str, ...] = (
     "log1p_share",
     "age_days",
 )
+# v2：纯文本特征，剔除一切互动指标衍生（避免标签泄漏）
+_V2_FEAT: tuple[str, ...] = (
+    "title_len",
+    "body_len",
+    "title_emoji_count",
+    "title_punct_count",
+    "title_has_number",
+    "title_has_question",
+    "title_char_diversity",
+    "title_hashtag_count",
+    "body_paragraph_count",
+    "body_emoji_count",
+    "body_has_cta",
+    "body_char_diversity",
+    "sop_tutorial",
+    "sop_review",
+    "sop_story",
+    "sop_list",
+    "emo_positive",
+    "emo_negative",
+    "emo_mixed",
+)
 
 
 def _utc_from_published_cell(s: Any) -> datetime | None:
@@ -99,6 +121,40 @@ def _utc_from_published_cell(s: Any) -> datetime | None:
     else:
         dt = dt.astimezone(timezone.utc)
     return dt
+
+
+def _build_v2_numeric_frame(df: Any, pd: Any, np: Any) -> tuple[Any, list[str]]:
+    """v2：纯文本特征（杜绝互动指标泄漏）。缺列时报错。"""
+    errs: list[str] = []
+    needed_num = (
+        "title_len", "body_len",
+        "title_emoji_count", "title_punct_count",
+        "title_has_number", "title_has_question",
+        "title_char_diversity", "title_hashtag_count",
+        "body_paragraph_count", "body_emoji_count",
+        "body_has_cta", "body_char_diversity",
+    )
+    for c in needed_num:
+        if c not in df.columns:
+            errs.append(f"v2 需要列 {c!r}（请用 export_features_v0 重新导出）")
+    if errs:
+        return df, errs
+
+    out_cols: dict[str, Any] = {}
+    for c in needed_num:
+        out_cols[c] = pd.to_numeric(df[c].replace("", np.nan), errors="coerce").fillna(0).astype(float)
+
+    sop = df["sop_tag"].fillna("").astype(str) if "sop_tag" in df.columns else pd.Series([""] * len(df))
+    out_cols["sop_tutorial"] = (sop == "tutorial").astype(float)
+    out_cols["sop_review"]   = (sop == "review").astype(float)
+    out_cols["sop_story"]    = (sop == "story").astype(float)
+    out_cols["sop_list"]     = (sop == "list").astype(float)
+
+    emo = df["emotion_tag"].fillna("").astype(str) if "emotion_tag" in df.columns else pd.Series([""] * len(df))
+    out_cols["emo_positive"] = (emo == "positive").astype(float)
+    out_cols["emo_negative"] = (emo == "negative").astype(float)
+    out_cols["emo_mixed"]    = (emo == "mixed").astype(float)
+    return pd.DataFrame(out_cols), []
 
 
 def _build_v1_numeric_frame(df: Any, pd: Any, np: Any) -> tuple[Any, list[str]]:
@@ -180,7 +236,13 @@ def build_design_matrix_with_frame(
     df = df.dropna(subset=[tc]).copy()
     df[tc] = df[tc].astype(int)
     fs = str(feature_schema).strip().lower()
-    if fs == "v1":
+    if fs == "v2":
+        v2_df, verr = _build_v2_numeric_frame(df, pd, np)
+        if verr:
+            raise ValueError("; ".join(verr))
+        feats = list(_V2_FEAT)
+        X = v2_df[list(_V2_FEAT)].values.astype(float)
+    elif fs == "v1":
         v1_df, verr = _build_v1_numeric_frame(df, pd, np)
         if verr:
             raise ValueError("; ".join(verr))
@@ -193,7 +255,7 @@ def build_design_matrix_with_frame(
                 raise ValueError(f"缺列: {c}")
         X = df[feats].values.astype(float)
     else:
-        raise ValueError(f"unknown feature_schema: {feature_schema!r} (use v0 or v1)")
+        raise ValueError(f"unknown feature_schema: {feature_schema!r} (use v0/v1/v2)")
     y = df[tc].values.astype(int)
     if len(np.unique(y)) < 2:
         raise ValueError(f"{tc} 只有一个类别，无法构建设计矩阵")
@@ -256,9 +318,22 @@ def main() -> int:
     )
     ap.add_argument(
         "--feature-schema",
-        choices=("v0", "v1"),
+        choices=("v0", "v1", "v2"),
         default="v0",
-        help="v0为三特征；v1 增加 log1p(comment/collect/share) 与 age_days（须 CSV 含对应列）",
+        help="v0=3 特征(含log1p_like，**有标签泄漏**)；v1 增加互动指标；"
+             "**v2=纯文本特征(推荐)**——剔除一切互动指标衍生，杜绝标签泄漏",
+    )
+    ap.add_argument(
+        "--split",
+        choices=("random", "time"),
+        default="random",
+        help="random=分层随机切分(旧默认)；time=按 published_at 升序前70%/后30%(推荐，反映真实泛化)",
+    )
+    ap.add_argument(
+        "--null-perm-runs",
+        type=int,
+        default=0,
+        help=">0 时跑 N 次标签随机置换的对照实验，写入 null_permutation 字段；建议 N=20",
     )
     ap.add_argument(
         "--target-column",
@@ -287,19 +362,20 @@ def main() -> int:
             return 2
         labels_spec_path_str = str(spec_path)
 
-    schema_tag = (
-        "feature_schema_v1"
-        if str(args.feature_schema).strip().lower() == "v1"
-        else "feature_schema_v0"
-    )
+    fs_lower = str(args.feature_schema).strip().lower()
+    schema_tag = {
+        "v0": "feature_schema_v0",
+        "v1": "feature_schema_v1",
+        "v2": "feature_schema_v2",
+    }.get(fs_lower, "feature_schema_v0")
     tc = str(args.target_column).strip()
     if tc not in ("y_rule", "y_rule_alt"):
         print("--target-column 须为 y_rule 或 y_rule_alt", flush=True)
         return 2
     try:
-        X, y, feats, prov = build_design_matrix(
+        X, y, feats, prov, df_aligned = build_design_matrix_with_frame(
             fp,
-            feature_schema=str(args.feature_schema).strip().lower(),
+            feature_schema=fs_lower,
             allow_mixed_batch=bool(args.allow_mixed_batch),
             target_column=tc,
         )
@@ -314,14 +390,110 @@ def main() -> int:
             flush=True,
         )
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=args.test_size, random_state=args.seed, stratify=y
-    )
-    clf = LogisticRegression(max_iter=200, random_state=args.seed)
+    # ── 切分：random（旧）或 time（按 published_at 升序前 N% 训练，后 1-N% 测试） ─
+    split_mode = str(args.split).strip().lower()
+    split_meta: dict[str, Any] = {"mode": split_mode}
+    if split_mode == "time":
+        if "published_at" not in df_aligned.columns:
+            print("错误：--split time 需要 CSV 含 published_at 列", flush=True)
+            return 2
+        ts = df_aligned["published_at"].astype(str).map(_utc_from_published_cell)
+        valid_mask = ts.notna()
+        n_valid = int(valid_mask.sum())
+        n_total = int(len(df_aligned))
+        coverage = n_valid / max(1, n_total)
+        if coverage < 0.5:
+            print(
+                f"错误：published_at 可解析率 {coverage:.1%} < 50%，时间外切分不可靠；"
+                "请改用 --split random 或先修复 ingest 时间字段",
+                flush=True,
+            )
+            return 2
+        # 仅在有时间戳的样本上排序；缺失时间戳的样本剔除
+        order = ts[valid_mask].argsort(kind="mergesort").values
+        idx_sorted = np.where(valid_mask)[0][order]
+        n_split = int(round(len(idx_sorted) * (1.0 - args.test_size)))
+        n_split = max(1, min(len(idx_sorted) - 1, n_split))
+        train_idx = idx_sorted[:n_split]
+        test_idx = idx_sorted[n_split:]
+        # 防止 test 集只有一类
+        if len(np.unique(y[test_idx])) < 2:
+            print(
+                f"警告：时间外测试集仅一类标签 (n_test={len(test_idx)})，"
+                "AUC 无法定义；建议增加样本或调整阈值",
+                flush=True,
+            )
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        split_meta.update({
+            "n_total_with_label": n_total,
+            "n_valid_published_at": n_valid,
+            "published_at_coverage": round(coverage, 4),
+            "n_train": int(len(train_idx)),
+            "n_test": int(len(test_idx)),
+            "test_size_target": float(args.test_size),
+        })
+        print(
+            f"[Split:time] 训练 {len(train_idx)} / 测试 {len(test_idx)}  "
+            f"(时间覆盖率 {coverage:.1%})",
+            flush=True,
+        )
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=args.test_size, random_state=args.seed, stratify=y
+        )
+        split_meta.update({
+            "test_size": float(args.test_size),
+            "random_seed": int(args.seed),
+            "stratify": True,
+        })
+
+    # v2 多特征下 max_iter=200 不够收敛，统一升到 2000
+    _MAXIT = 2000
+    clf = LogisticRegression(max_iter=_MAXIT, random_state=args.seed)
     clf.fit(X_train, y_train)
     proba = clf.predict_proba(X_test)[:, 1]
-    auc = float(roc_auc_score(y_test, proba))
+    if len(np.unique(y_test)) >= 2:
+        auc = float(roc_auc_score(y_test, proba))
+    else:
+        auc = float("nan")
     brier_hold = float(brier_score_loss(y_test, proba))
+
+    # ── Null-permutation 控制实验：标签随机洗牌 N 次，期望 AUC≈0.5 ─────────
+    null_perm_block: dict[str, Any] | None = None
+    if int(args.null_perm_runs) > 0:
+        n_runs = int(args.null_perm_runs)
+        rng = np.random.default_rng(args.seed)
+        perm_aucs: list[float] = []
+        for r in range(n_runs):
+            y_train_shuf = rng.permutation(y_train)
+            m = LogisticRegression(max_iter=_MAXIT, random_state=args.seed + r)
+            m.fit(X_train, y_train_shuf)
+            pv = m.predict_proba(X_test)[:, 1]
+            if len(np.unique(y_test)) >= 2:
+                perm_aucs.append(float(roc_auc_score(y_test, pv)))
+        if perm_aucs:
+            null_mean = float(np.mean(perm_aucs))
+            null_std = float(np.std(perm_aucs, ddof=1)) if len(perm_aucs) > 1 else 0.0
+            gap = (auc - null_mean) if not math.isnan(auc) else float("nan")
+            null_perm_block = {
+                "n_runs": n_runs,
+                "auc_mean": null_mean,
+                "auc_std": null_std,
+                "auc_min": float(np.min(perm_aucs)),
+                "auc_max": float(np.max(perm_aucs)),
+                "real_minus_null_mean": gap,
+                "verdict": (
+                    "PASS_signal" if (not math.isnan(gap) and gap > 0.10)
+                    else "WARN_no_signal" if not math.isnan(gap)
+                    else "INDETERMINATE"
+                ),
+            }
+            print(
+                f"[NullPerm] x{n_runs}  null AUC mean={null_mean:.4f}±{null_std:.4f}  "
+                f"real-null={gap:+.4f}  ->  {null_perm_block['verdict']}",
+                flush=True,
+            )
 
     cv_block: dict[str, Any] | None = None
     if int(args.cv_folds) > 0:
@@ -345,7 +517,7 @@ def main() -> int:
             brs: list[float] = []
             skf = StratifiedKFold(n_splits=k_eff, shuffle=True, random_state=args.seed)
             for tr, va in skf.split(X, y):
-                m = LogisticRegression(max_iter=200, random_state=args.seed)
+                m = LogisticRegression(max_iter=_MAXIT, random_state=args.seed)
                 m.fit(X[tr], y[tr])
                 pv = m.predict_proba(X[va])[:, 1]
                 aucs.append(float(roc_auc_score(y[va], pv)))
@@ -382,16 +554,13 @@ def main() -> int:
         "n_test": int(len(y_test)),
         "holdout_roc_auc": auc,
         "holdout_brier_score": brier_hold,
-        "train_test_split": {
-            "test_size": float(args.test_size),
-            "random_seed": int(args.seed),
-            "stratify": True,
-        },
+        "train_test_split": split_meta,
         "input_features_path": str(fp),
         "input_features_sha256": _sha256_file(fp),
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "note": f"操作化标签列 {tc}；不得解释为平台真实爆文概率；外推需重新校准"
-        + ("；v1 含互动与稿龄特征，线上缺参时用环境变量/params 默认" if schema_tag == "feature_schema_v1" else ""),
+        + ("；v1 含互动与稿龄特征，线上缺参时用环境变量/params 默认" if schema_tag == "feature_schema_v1" else "")
+        + ("；v2 为纯文本特征(剔除互动指标)，杜绝标签泄漏，AUC 体现真实弱信号" if schema_tag == "feature_schema_v2" else ""),
         "target_column": tc,
         "features_provenance": prov,
     }
@@ -400,9 +569,12 @@ def main() -> int:
         payload["labels_spec"] = labels_spec
     if cv_block is not None:
         payload["cross_validation"] = cv_block
+    if null_perm_block is not None:
+        payload["null_permutation"] = null_perm_block
     out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    auc_str = f"{auc:.4f}" if not math.isnan(auc) else "nan"
     print(f"Wrote {out_path}", flush=True)
-    print(f"Hold-out ROC-AUC: {auc:.4f}  Brier: {brier_hold:.4f}", flush=True)
+    print(f"Hold-out ROC-AUC: {auc_str}  Brier: {brier_hold:.4f}", flush=True)
     return 0
 
 

@@ -186,6 +186,62 @@ python research\train_baseline_v0.py --features research\features_v0.csv --out r
 
 ---
 
+## 6.5 AUC「跑真」专题（2026-04-17）：标签泄漏定位与修复对照
+
+### 问题陈述
+长期观察到 v0/v1 的 hold-out ROC-AUC 接近 1.0，伴随系统自带 warnings `holdout_auc_very_high_check_overfit`，与 null-permutation 基线的 AUC≈0.5 形成不合理的 0.5+ 鸿沟，怀疑标签泄漏。
+
+### 根因
+- **`y_rule = 1 if like_proxy >= viral_like_threshold else 0`**（操作化标签）
+- **`feature_schema_v0`**：特征含 `log1p_like = log1p(like_proxy)` ←  与标签同源
+- **`feature_schema_v1`**：在 v0 基础上额外加入 `log1p_comment / log1p_collect / log1p_share` ← 互动指标族系仍同源相关
+- 模型实质学到「`like_proxy` 是否过阈值」，AUC 必然趋近 1.0
+
+结论：v0/v1 的高 AUC 不是「过拟合」，而是**结构性标签泄漏**。
+
+### 修复
+新增 **`feature_schema_v2`**（纯文本特征，杜绝任何互动指标衍生）：
+- 文本结构：`title_len, body_len, title_emoji_count, title_punct_count, title_has_number, title_has_question, title_char_diversity, title_hashtag_count`
+- 正文结构：`body_paragraph_count, body_emoji_count, body_has_cta, body_char_diversity`
+- 已枚举标签的 one-hot：`sop_{tutorial,review,story,list}, emo_{positive,negative,mixed}`
+
+同时新增 `train_baseline_v0.py` 选项：
+- `--feature-schema v2`
+- `--split time`：按 `published_at` 升序前 70% 训练 / 后 30% 测试（**真实泛化**评估）
+- `--null-perm-runs N`：N 次标签随机置换的对照实验，写入 `null_permutation` 字段并给出 verdict
+
+### 对照实测（2026-04-17，n=741，`viral_like_threshold=1000`）
+
+| feature_schema | split | hold-out ROC-AUC | Brier | null perm AUC (mean±std, n=20) | real − null | verdict |
+|---|---|---|---|---|---|---|
+| **v0**（含 `log1p_like`） | random 70/30 | **1.0000** | 0.0097 | 0.5078 ± 0.3459 | **+0.4922** | PASS_signal（**实为泄漏伪信号**） |
+| **v1**（含互动指标族系） | time 70/30 | **1.0000** | 0.0080 | 0.4933 ± 0.3421 | **+0.5067** | PASS_signal（**实为泄漏伪信号**） |
+| **v2**（纯文本） | random 70/30 | 0.5761 | 0.1380 | 0.4789 ± 0.0680 | +0.0972 | WARN_no_signal |
+| **v2**（纯文本） | **time 70/30** | **0.5320** | 0.1836 | 0.5006 ± 0.0831 | +0.0314 | **WARN_no_signal**（真实结论） |
+
+### 真实结论
+1. **v2 时间外 AUC = 0.5320，与随机基线无显著差距**——「仅靠文本结构特征（标题长度 / emoji 数 / CTA / SOP 类型 / emotion）几乎无法预测高赞」是当前数据下的**真信号**。
+2. v0/v1 之前报告的 AUC≈1.0 全部为标签泄漏导致的伪结果，**不可作为「公式有效」的证据**。
+3. 后续如要重新追求 AUC > 0.65 的真实信号，需引入**与 like_proxy 不同源**的特征：
+   - 内容质量人工标注（hook 强度、信息密度、情绪强度——蓝图中的 L0 标签）
+   - 账号特征（粉丝量、历史均赞、历史命中率）
+   - 时间/赛道特征（发布时段、关键词热度、节日窗口）
+4. **生产侧 OpenClaw `xhs_factory._baseline_lr_logistic_p` 已在加载 v0/v1 产物做评分，等同于「在线上输出泄漏模型」**——本周需要把 `XHS_FACTORY_BASELINE_JSON` 切换到 `baseline_v2_time.json`，或先关闭 baseline 模式（`XHS_FACTORY_PREDICT_USE_LLM=1`）直到 v2 信号增强。
+
+### 复现命令
+```powershell
+# 重新导出含 v2 列的特征
+python scripts\export_features_v0.py --samples openclaw\data\xhs-feed\samples.json --out research\features_v2.csv --labels-spec research\labels_spec.json
+
+# 对照：旧 v0（泄漏证据）
+python research\train_baseline_v0.py --features research\features_v2.csv --feature-schema v0 --out research\artifacts\baseline_v0_LEAK.json --null-perm-runs 20
+
+# 修复：v2 + 时间外切分（真实结论）
+python research\train_baseline_v0.py --features research\features_v2.csv --feature-schema v2 --split time --out research\artifacts\baseline_v2_time.json --null-perm-runs 20
+```
+
+---
+
 ## 七、持续数分自动记录（evaluate_baseline_weights）
 
 > 以下条目由 `scripts/continuous-xhs-analytics.ps1` 在 **满足 digest 代数间隔**（默认每 10 次新 digest）并完成 v0/v1 权重评估后自动追加。解释约束见各 `research/artifacts/eval_*.json` 内 `interpretation_constraints`。全量词表与历史快照见 `research/analytics_history/`下 `keyword_candidates.json` / `manifest.json`；若需人工收窄关键词可改 `-TopKeywords` 或自行编辑 CLI 行。

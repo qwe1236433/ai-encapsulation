@@ -35,9 +35,70 @@ import hashlib
 import json
 import math
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+# ── v2 纯文本特征：完全不依赖互动数据，避免标签泄漏 ─────────────────────────
+
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F300-\U0001F5FF"  # symbols & pictographs
+    "\U0001F600-\U0001F64F"  # emoticons
+    "\U0001F680-\U0001F6FF"  # transport
+    "\U0001F700-\U0001F77F"
+    "\U0001F900-\U0001F9FF"
+    "\U0001FA70-\U0001FAFF"
+    "\u2600-\u27BF"           # misc symbols + dingbats
+    "]+",
+    flags=re.UNICODE,
+)
+_PUNCT_SET = set("，。！？、；：""''（）【】《》,.!?;:()[]<>~～—…")
+_CTA_WORDS = ("评论", "收藏", "点赞", "关注", "转发", "私信", "求推荐",
+              "求安利", "求科普", "你怎么看", "你呢", "欢迎留言")
+_NUM_RE = re.compile(r"[0-9０-９]")
+_QUESTION_CHARS = set("？?")
+
+
+def _emoji_count(s: str) -> int:
+    return sum(len(m.group(0)) for m in _EMOJI_RE.finditer(s))
+
+
+def _punct_count(s: str) -> int:
+    return sum(1 for ch in s if ch in _PUNCT_SET)
+
+
+def _has_number(s: str) -> int:
+    return 1 if _NUM_RE.search(s) else 0
+
+
+def _has_question(s: str) -> int:
+    return 1 if any(ch in _QUESTION_CHARS for ch in s) else 0
+
+
+def _has_cta(s: str) -> int:
+    s_low = s.lower()
+    return 1 if any(w in s_low for w in _CTA_WORDS) else 0
+
+
+def _paragraph_count(body: str) -> int:
+    if not body:
+        return 0
+    parts = [p.strip() for p in re.split(r"\n+", body) if p.strip()]
+    return max(1, len(parts))
+
+
+def _hashtag_count(s: str) -> int:
+    return s.count("#")
+
+
+def _char_diversity(s: str) -> float:
+    """字符种类比例：unique / total，越接近 1 表示文本越发散。"""
+    if not s:
+        return 0.0
+    return round(len(set(s)) / max(1, len(s)), 6)
 
 
 def _sha256_file(path: Path) -> str:
@@ -256,6 +317,17 @@ def main() -> int:
         "y_rule_alt",
         "batch_id",
         "feed_digest_sha256",
+        # ── v2 纯文本特征（不依赖任何互动指标，杜绝标签泄漏） ──────────────
+        "title_emoji_count",
+        "title_punct_count",
+        "title_has_number",
+        "title_has_question",
+        "title_char_diversity",
+        "title_hashtag_count",
+        "body_paragraph_count",
+        "body_emoji_count",
+        "body_has_cta",
+        "body_char_diversity",
     ]
 
     def _opt_int_cell(row: dict[str, Any], key: str) -> str:
@@ -304,6 +376,16 @@ def main() -> int:
                     "y_rule_alt": y_alt,
                     "batch_id": batch_id_val,
                     "feed_digest_sha256": feed_sha,
+                    "title_emoji_count":     _emoji_count(title),
+                    "title_punct_count":     _punct_count(title),
+                    "title_has_number":      _has_number(title),
+                    "title_has_question":    _has_question(title),
+                    "title_char_diversity":  _char_diversity(title),
+                    "title_hashtag_count":   _hashtag_count(title),
+                    "body_paragraph_count":  _paragraph_count(body),
+                    "body_emoji_count":      _emoji_count(body),
+                    "body_has_cta":          _has_cta(body),
+                    "body_char_diversity":   _char_diversity(body),
                 }
             )
 

@@ -64,86 +64,166 @@ class HumanBehavior:
     """
     模拟真实用户的浏览节律，使请求时序分布接近人类行为。
 
-    核心思路：
-      - 停留时长用对数正态分布（比均匀分布更接近真实阅读行为）
-      - 5% 概率触发"走神停顿"（15-45s），模拟用户去做别的事
-      - 2% 概率触发"深度阅读"（45-90s），模拟用户认真看内容
-      - 关键词切换前有"思考停顿"
-      - 整体节奏会随错误率自适应变慢
+    核心行为链（每次查看一条笔记）：
+      鼠标游走 → 滚轮下滑列表 → 点击进入 → 阅读停留 → 滚轮浏览正文 → 退出
+
+    特殊事件（低概率）：
+      2%  深度阅读  45-90s
+      5%  走神停顿  15-45s
+      8%  回头翻阅（scroll_up 再 scroll_down）
+      整体节奏随错误率自适应变慢
     """
 
-    def __init__(self, base_sec: float = 4.0) -> None:
-        self.base_sec = base_sec          # 基础停留中位数（秒）
-        self._error_count = 0             # 连续错误计数（用于退避）
-        self._request_count = 0           # 总请求数
+    # 标准视口高度（px），决定一次滚动多少"屏"
+    _VIEWPORT_H = 844
 
-    # ── 核心停留 ─────────────────────────────────────────────────────────────
+    def __init__(self, base_sec: float = 4.0) -> None:
+        self.base_sec = base_sec
+        self._error_count = 0
+        self._request_count = 0
+
+    # ── 核心概率分布 ─────────────────────────────────────────────────────────
 
     def _lognormal_sleep(self, median: float, sigma: float = 0.4) -> float:
-        """
-        对数正态分布停留时长。
-        median=中位数，sigma 控制分布宽度（0.4 ~ 相差约2倍）。
-        """
-        mu = math.log(median)
-        raw = random.lognormvariate(mu, sigma)
-        # 硬限：不短于 1s，不长于 median * 8
+        """对数正态停留，median=中位数，上限 median×8，下限 1s。"""
+        raw = random.lognormvariate(math.log(median), sigma)
         return max(1.0, min(raw, median * 8))
 
+    def _micro(self, lo: float = 0.08, hi: float = 0.35) -> None:
+        """微停顿：模拟鼠标移动或 DOM 渲染完成后的自然停顿。"""
+        time.sleep(random.uniform(lo, hi))
+
     def _roll_special_event(self) -> float | None:
-        """
-        小概率特殊停顿：
-          5% → 走神 15-45s
-          2% → 深度阅读 45-90s
-        """
         r = random.random()
         if r < 0.02:
-            pause = random.uniform(45, 90)
-            log(f"  [行为] 深度阅读停顿 {pause:.0f}s...")
-            return pause
+            p = random.uniform(45, 90)
+            log(f"  [行为] 深度阅读停顿 {p:.0f}s ...")
+            return p
         if r < 0.07:
-            pause = random.uniform(15, 45)
-            log(f"  [行为] 走神停顿 {pause:.0f}s...")
-            return pause
+            p = random.uniform(15, 45)
+            log(f"  [行为] 走神停顿 {p:.0f}s ...")
+            return p
         return None
 
-    # ── 公开接口 ─────────────────────────────────────────────────────────────
+    # ── 鼠标指针游走 ──────────────────────────────────────────────────────────
 
-    def dwell_after_note(self) -> None:
-        """查看一条笔记后的停留（主要调用点）。"""
+    def mouse_drift(self, label: str = "") -> None:
+        """
+        模拟鼠标在页面上的随机游走停顿。
+        每次"移动"产生 0.05-0.25s 的微停，模拟指针从上一位置
+        移向目标控件的路径耗时（贝塞尔曲线运动在时域上的投影）。
+        """
+        steps = random.randint(2, 5)          # 鼠标经过几个"中途点"
+        total = 0.0
+        for _ in range(steps):
+            t = random.uniform(0.05, 0.25)
+            time.sleep(t)
+            total += t
+        if label:
+            log(f"  [鼠标] 移向 [{label}]  {total:.2f}s  ({steps}步)")
+
+    # ── 滚轮行为 ──────────────────────────────────────────────────────────────
+
+    def scroll_down_list(self, n_items: int) -> None:
+        """
+        浏览结果列表：模拟用户用滚轮从上往下扫一遍。
+        每滚动约 1 屏（约 3 条卡片）停顿一次，眼睛扫视标题。
+        """
+        screens = max(1, math.ceil(n_items / 3))
+        log(f"  [滚轮] 下滑列表 {screens} 屏（共约 {n_items} 条）")
+        for i in range(screens):
+            # 每屏滚动分 2-4 次滚轮事件（不是一次到底）
+            sub_scrolls = random.randint(2, 4)
+            for _ in range(sub_scrolls):
+                self._micro(0.10, 0.30)       # 每次滚轮事件间隔
+            # 扫视卡片的眼动停顿
+            gaze = random.uniform(0.4, 1.2)
+            time.sleep(gaze)
+
+    def scroll_read_body(self, body_len: int = 200) -> None:
+        """
+        阅读笔记正文：按正文字数估算阅读时长，分段滚动。
+        中文阅读速度约 400-600 字/分钟。
+        """
+        if body_len <= 0:
+            self._micro(0.5, 1.2)
+            return
+        read_sec = body_len / random.uniform(400, 600) * 60  # 字 → 秒
+        # 分 2-5 段滚动，模拟边读边划
+        segments = random.randint(2, min(5, max(2, body_len // 80)))
+        log(f"  [滚轮] 阅读正文 {body_len}字 ~{read_sec:.0f}s  分{segments}段")
+        seg_time = read_sec / segments
+        for _ in range(segments):
+            time.sleep(max(0.3, seg_time + random.uniform(-0.3, 0.5)))
+            self._micro(0.05, 0.15)   # 每次滚动后的短暂暂停
+
+        # 8% 概率"往上翻了一下再往下"
+        if random.random() < 0.08:
+            up_t = random.uniform(0.8, 2.0)
+            log(f"  [滚轮] 回翻 {up_t:.1f}s")
+            time.sleep(up_t)
+            self._micro(0.1, 0.3)
+
+    # ── 翻页行为 ──────────────────────────────────────────────────────────────
+
+    def page_turn(self, page_num: int) -> None:
+        """
+        翻到下一页：
+          1. 鼠标移向翻页区域（drift）
+          2. 点击/触发翻页（micro）
+          3. 等待新一页加载（lognormal 2s 中位）
+        """
+        self.mouse_drift("翻页按钮")
+        self._micro(0.1, 0.3)                 # 点击延迟
+        load = self._lognormal_sleep(2.0, sigma=0.35)
+        log(f"  [翻页] 第 {page_num} 页加载 {load:.1f}s")
+        time.sleep(load)
+
+    # ── 复合动作 ─────────────────────────────────────────────────────────────
+
+    def dwell_after_note(self, body_len: int = 0) -> None:
+        """
+        查看完一条笔记后的完整退出-停留动作：
+          滚轮读正文 → 特殊事件检查 → 鼠标移回列表 → 间隔停留
+        """
+        self.scroll_read_body(body_len)
+
         special = self._roll_special_event()
         if special:
             time.sleep(special)
             return
 
-        # 错误退避：连续错误则加倍
+        self.mouse_drift("返回列表")
+
         multiplier = min(2 ** self._error_count, 8)
         median = self.base_sec * multiplier
         delay = self._lognormal_sleep(median, sigma=0.45)
-        log(f"  [行为] 停留 {delay:.1f}s  (err_backoff x{multiplier})")
+        log(f"  [行为] 间隔停留 {delay:.1f}s  (backoff x{multiplier})")
         time.sleep(delay)
 
     def dwell_between_searches(self) -> None:
-        """两个关键词之间的思考停顿（比单条停留更长）。"""
+        """关键词切换前的"思考+移回搜索框"。"""
+        self.mouse_drift("搜索框")
         delay = self._lognormal_sleep(self.base_sec * 2.5, sigma=0.5)
         log(f"[行为] 关键词切换停顿 {delay:.1f}s")
         time.sleep(delay)
 
     def warmup_browse(self, n: int = 2) -> None:
-        """
-        预热浏览：搜索前先"随手刷"几次 feeds，
-        让账号行为看起来不是"开了就直奔搜索"。
-        """
+        """预热：搜索前随手刷几条 feeds，让入口行为自然。"""
         log(f"[行为] 预热浏览 {n} 次 feeds（模拟自然入口）...")
-        for i in range(n):
+        for _ in range(n):
+            self.scroll_down_list(random.randint(4, 8))
             delay = self._lognormal_sleep(3.0, sigma=0.6)
             time.sleep(delay)
 
     def typing_pause(self, keyword: str) -> None:
-        """输入关键词前的短暂停顿（模拟打字行为）。"""
-        # 按关键词字符数估算打字时长（每字约 0.2-0.4s）
+        """模拟把光标移到搜索框、逐字打字的耗时。"""
+        self.mouse_drift("搜索框")
         typing_time = len(keyword) * random.uniform(0.15, 0.35)
-        delay = typing_time + random.uniform(0.5, 1.5)
+        delay = typing_time + random.uniform(0.4, 1.2)
         time.sleep(delay)
+
+    # ── 状态 ─────────────────────────────────────────────────────────────────
 
     def record_success(self) -> None:
         self._error_count = max(0, self._error_count - 1)
@@ -305,20 +385,28 @@ class McpSession:
 
     # ── 高层接口 ──────────────────────────────────────────────────────────────
 
-    def search(self, keyword: str) -> list[dict]:
-        """搜索关键词，优先走 MCP 工具（保持同一浏览器会话）。"""
-        data = self.call("xhs_search_note", {"keyword": keyword})
-        if data is None:
-            # 降级：CLI 搜索（会开新页，但不失败）
-            log("[MCP] search 工具失败，降级 CLI")
-            return _cli_search(keyword)
+    def _extract_feeds(self, data) -> list[dict]:
         if isinstance(data, list):
             return data
         if isinstance(data, dict):
-            for k in ("feeds", "notes", "items", "data"):
+            for k in ("feeds", "notes", "items", "data", "result"):
                 if isinstance(data.get(k), list):
                     return data[k]
         return []
+
+    def search(self, keyword: str, page: int = 1) -> list[dict]:
+        """
+        搜索关键词，支持翻页（page >= 1）。
+        优先走 MCP 工具以复用同一浏览器会话；失败时降级 CLI。
+        """
+        args: dict = {"keyword": keyword}
+        if page > 1:
+            args["page"] = page          # xhs-mcp 若支持分页则生效
+        data = self.call("xhs_search_note", args)
+        if data is None:
+            log("[MCP] search 工具失败，降级 CLI")
+            return _cli_search(keyword)
+        return self._extract_feeds(data)
 
     def get_detail(self, feed_id: str, xsec_token: str) -> dict | None:
         """拉取笔记详情（正文）。"""
@@ -328,7 +416,7 @@ class McpSession:
         })
 
     def warmup_feeds(self) -> None:
-        """预热：通过 MCP 浏览 discover feeds，让账号有"正常入口"行为。"""
+        """预热：浏览 discover feeds，让账号有"正常入口"行为。"""
         self.call("xhs_discover_feeds", {})
 
 
@@ -511,7 +599,7 @@ def main() -> None:
     new_items: list[dict] = []
 
     try:
-        # 预热：搜索前先随手浏览一下，让入口行为自然
+        # 预热：搜索前随手刷几条 feeds，让入口行为自然
         human.warmup_browse(n=random.randint(1, 3))
         session.warmup_feeds()
 
@@ -521,19 +609,48 @@ def main() -> None:
 
             # 模拟打字后发起搜索
             human.typing_pause(kw)
-            feeds = session.search(kw)
-            log(f"[搜索] 返回 {len(feeds)} 条")
 
-            take = feeds[:args.limit]
-            # 随机打乱顺序（真实用户不总是从上到下浏览）
+            # ── 多页采集 ────────────────────────────────────────────────────
+            all_feeds: list[dict] = []
+            page = 1
+            # 每页约 20 条，按 limit 决定翻几页（最多 5 页）
+            max_pages = min(5, math.ceil(args.limit / 20))
+
+            while len(all_feeds) < args.limit and page <= max_pages:
+                if page > 1:
+                    human.page_turn(page)    # 翻页行为（鼠标→点击→等加载）
+
+                feeds_page = session.search(kw, page=page)
+                log(f"  [P{page}] 返回 {len(feeds_page)} 条")
+
+                if not feeds_page:
+                    log(f"  [P{page}] 无更多结果，停止翻页")
+                    break
+
+                # 滚轮浏览这一页的结果列表
+                human.scroll_down_list(len(feeds_page))
+
+                all_feeds.extend(feeds_page)
+                page += 1
+
+            # 去重后随机乱序（真实用户不总是从上到下点）
+            take = all_feeds[:args.limit * 2]   # 多取一些，去重后再截
             random.shuffle(take)
-            log(f"[处理] 乱序取 {len(take)} 条")
+            log(f"[处理] 共 {len(all_feeds)} 条，乱序处理前 {len(take)} 条")
 
+            processed = 0
             for idx, feed in enumerate(take, 1):
+                if processed >= args.limit:
+                    break
+
                 note_id   = feed.get("id", "")
                 xsec      = feed.get("xsecToken", "")
-                note_card = feed.get("noteCard", {})
-                title_raw = note_card.get("displayTitle", "")[:25]
+                note_card = feed.get("noteCard", feed)
+                title_raw = (note_card.get("displayTitle")
+                             or note_card.get("title", ""))[:25]
+
+                # 鼠标移向卡片（模拟选中目标）
+                human.mouse_drift(f"卡片[{idx}]")
 
                 # 拉取详情（正文）
                 detail = None
@@ -547,31 +664,33 @@ def main() -> None:
                 item = map_item(feed, detail, kw)
                 if item is None:
                     log(f"  [{idx:02d}] 跳过（无文本）")
-                    human.dwell_after_note()
+                    human.dwell_after_note(body_len=0)
                     continue
 
                 dk = _dedup_key(item)
                 if dk in seen:
                     log(f"  [{idx:02d}] 重复: {title_raw}")
-                    human.dwell_after_note()
+                    human.dwell_after_note(body_len=0)
                     continue
 
                 seen.add(dk)
                 new_items.append(item)
+                processed += 1
 
-                body_flag = "Y" if item.get("body_hint") else "N"
+                body_len = len(item.get("body_hint", ""))
+                body_flag = "Y" if body_len else "N"
                 log(
                     f"  [{idx:02d}] {title_raw:26s}"
                     f"  like={item['like_proxy']:>6}"
                     f"  collect={item.get('collect_proxy', 0):>5}"
-                    f"  body={body_flag}"
+                    f"  body={body_flag}({body_len}字)"
                     f"  sop={item['sop_tag']}"
                     f"  [{human.status}]"
                 )
 
-                # 每条之间的停留（人类化延时）
-                if idx < len(take):
-                    human.dwell_after_note()
+                # 阅读正文 + 滚轮 + 间隔停留
+                if processed < args.limit:
+                    human.dwell_after_note(body_len=body_len)
 
             # 关键词之间的停顿
             if kw_idx < len(keywords) - 1:

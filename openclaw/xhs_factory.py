@@ -195,6 +195,107 @@ _BASELINE_V1_FEATS: tuple[str, ...] = (
     "log1p_share",
     "age_days",
 )
+# v2：纯文本特征，杜绝标签泄漏；与 scripts/export_features_v0.py 一一对齐
+_BASELINE_V2_FEATS: tuple[str, ...] = (
+    "title_len",
+    "body_len",
+    "title_emoji_count",
+    "title_punct_count",
+    "title_has_number",
+    "title_has_question",
+    "title_char_diversity",
+    "title_hashtag_count",
+    "body_paragraph_count",
+    "body_emoji_count",
+    "body_has_cta",
+    "body_char_diversity",
+    "sop_tutorial",
+    "sop_review",
+    "sop_story",
+    "sop_list",
+    "emo_positive",
+    "emo_negative",
+    "emo_mixed",
+)
+
+# v2 文本特征提取的常量（与 scripts/export_features_v0.py 保持一致）
+import re as _re  # noqa: E402
+
+_V2_EMOJI_RE = _re.compile(
+    "["
+    "\U0001F300-\U0001F5FF"
+    "\U0001F600-\U0001F64F"
+    "\U0001F680-\U0001F6FF"
+    "\U0001F700-\U0001F77F"
+    "\U0001F900-\U0001F9FF"
+    "\U0001FA70-\U0001FAFF"
+    "\u2600-\u27BF"
+    "]+",
+    flags=_re.UNICODE,
+)
+_V2_PUNCT_SET = set("，。！？、；：""''（）【】《》,.!?;:()[]<>~～—…")
+_V2_CTA_WORDS = (
+    "评论", "收藏", "点赞", "关注", "转发", "私信",
+    "求推荐", "求安利", "求科普", "你怎么看", "你呢", "欢迎留言",
+)
+_V2_NUM_RE = _re.compile(r"[0-9０-９]")
+_V2_QUESTION_CHARS = set("？?")
+_V2_SOP_CATS = ("tutorial", "review", "story", "list")
+_V2_EMO_CATS = ("positive", "negative", "mixed")
+
+
+def _v2_text_features(title: str, body: str,
+                      sop_tag: str = "", emotion_tag: str = "") -> dict[str, float]:
+    """从原始 title/body/sop/emotion 计算 v2 全部 19 维纯文本特征。"""
+    t = (title or "").strip()
+    b = (body or "").strip()
+
+    def emoji_count(s: str) -> int:
+        return sum(len(m.group(0)) for m in _V2_EMOJI_RE.finditer(s))
+
+    def punct_count(s: str) -> int:
+        return sum(1 for ch in s if ch in _V2_PUNCT_SET)
+
+    def has_num(s: str) -> int:
+        return 1 if _V2_NUM_RE.search(s) else 0
+
+    def has_q(s: str) -> int:
+        return 1 if any(ch in _V2_QUESTION_CHARS for ch in s) else 0
+
+    def has_cta(s: str) -> int:
+        s_low = s.lower()
+        return 1 if any(w in s_low for w in _V2_CTA_WORDS) else 0
+
+    def char_div(s: str) -> float:
+        return round(len(set(s)) / max(1, len(s)), 6) if s else 0.0
+
+    def paragraph_count(s: str) -> int:
+        if not s:
+            return 0
+        parts = [p.strip() for p in _re.split(r"\n+", s) if p.strip()]
+        return max(1, len(parts))
+
+    feats: dict[str, float] = {
+        "title_len":             float(len(t)),
+        "body_len":              float(len(b)),
+        "title_emoji_count":     float(emoji_count(t)),
+        "title_punct_count":     float(punct_count(t)),
+        "title_has_number":      float(has_num(t)),
+        "title_has_question":    float(has_q(t)),
+        "title_char_diversity":  float(char_div(t)),
+        "title_hashtag_count":   float(t.count("#")),
+        "body_paragraph_count":  float(paragraph_count(b)),
+        "body_emoji_count":      float(emoji_count(b)),
+        "body_has_cta":          float(has_cta(b)),
+        "body_char_diversity":   float(char_div(b)),
+    }
+    sop = (sop_tag or "").strip().lower()
+    for cat in _V2_SOP_CATS:
+        feats[f"sop_{cat}"] = 1.0 if sop == cat else 0.0
+    emo = (emotion_tag or "").strip().lower()
+    for cat in _V2_EMO_CATS:
+        feats[f"emo_{cat}"] = 1.0 if emo == cat else 0.0
+    return feats
 
 
 def _utc_dt_from_published_iso(s: str) -> datetime | None:
@@ -243,7 +344,7 @@ def _baseline_age_days_from_hint(hints: dict[str, Any] | None) -> float:
 
 
 def _load_baseline_lr_payload() -> dict[str, Any] | None:
-    """读取 train_baseline_v0产出；支持 feature_schema_v0 / feature_schema_v1。"""
+    """读取 train_baseline_v0 产出；支持 feature_schema_v0 / v1 / v2。"""
     global _baseline_lr_cache, _baseline_lr_cache_key
     path = (os.environ.get("XHS_FACTORY_BASELINE_JSON") or "").strip()
     if not path or not os.path.isfile(path):
@@ -262,7 +363,7 @@ def _load_baseline_lr_payload() -> dict[str, Any] | None:
     if not isinstance(data, dict):
         return None
     schema = data.get("schema")
-    if schema not in ("feature_schema_v0", "feature_schema_v1"):
+    if schema not in ("feature_schema_v0", "feature_schema_v1", "feature_schema_v2"):
         return None
     feats = data.get("feature_names")
     coef = data.get("coefficients")
@@ -272,7 +373,10 @@ def _load_baseline_lr_payload() -> dict[str, Any] | None:
     if schema == "feature_schema_v0":
         if tuple(feats) != _BASELINE_V0_FEATS:
             return None
-    elif tuple(feats) != _BASELINE_V1_FEATS:
+    elif schema == "feature_schema_v1":
+        if tuple(feats) != _BASELINE_V1_FEATS:
+            return None
+    elif tuple(feats) != _BASELINE_V2_FEATS:
         return None
     for name in feats:
         if name not in coef:
@@ -292,6 +396,46 @@ def _baseline_lr_logistic_p(
     coefs: dict[str, Any] = payload["coefficients"]
     icept = float(payload["intercept"])
     schema = str(payload.get("schema") or "")
+    hints = v1_hints or {}
+
+    # ── v2：纯文本特征分支（无标签泄漏） ──────────────────────────────────
+    if schema == "feature_schema_v2":
+        # 优先用 hints 里已有的拆分文本；否则按"首行=标题、其余=正文"启发式拆
+        title_h = str(hints.get("title_hint") or hints.get("title") or "").strip()
+        body_h = str(hints.get("body_hint") or hints.get("body") or "").strip()
+        if not title_h and not body_h:
+            t = (text or "").strip()
+            if "\n" in t:
+                first, _, rest = t.partition("\n")
+                title_h = first.strip()[:500]
+                body_h = rest.strip()[:2000]
+            else:
+                title_h = ""
+                body_h = t.strip()[:2000]
+        sop_tag = str(hints.get("sop_tag") or "").strip().lower()
+        emo_tag = str(hints.get("emotion_tag") or "").strip().lower()
+        x_map = _v2_text_features(title_h, body_h, sop_tag=sop_tag, emotion_tag=emo_tag)
+        detail: dict[str, Any] = {
+            "model": "baseline_lr_v2",
+            "schema": schema,
+            "title_len": int(x_map["title_len"]),
+            "body_len": int(x_map["body_len"]),
+            "v2_features": {k: round(v, 6) for k, v in x_map.items()},
+            "z_linear": None,
+            "p_logistic_raw": None,
+        }
+        z = icept
+        for name in feats:
+            if name not in x_map:
+                return 0.5, {**detail, "error": f"missing_feature:{name}"}
+            z += float(coefs[name]) * x_map[name]
+        detail["z_linear"] = round(z, 6)
+        zc = max(-30.0, min(30.0, z))
+        p = 1.0 / (1.0 + math.exp(-zc))
+        detail["p_logistic_raw"] = round(p, 6)
+        return p, detail
+
+    # ── v0 / v1：旧分支（保持向后兼容；已知有标签泄漏，仅作过渡） ─────────
     title_len, body_len = _recreated_text_to_title_body_lengths(text)
     if like_proxy_hint is not None and int(like_proxy_hint) >= 1:
         assumed = int(like_proxy_hint)

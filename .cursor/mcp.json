@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "xhs-mcp": {
+      "command": "npx",
+      "args": ["xhs-mcp", "mcp"],
+      "env": {
+        "XHS_ENABLE_LOGGING": "false"
+      }
+    }
+  }
+}

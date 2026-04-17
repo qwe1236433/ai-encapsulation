@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   打印「稳健三窗」采集 + 数分说明；可选只启动合并或数分循环。
@@ -58,7 +58,8 @@ Write-Host "  种子词：复制 research\keyword_seed.example.txt 为 keyword_s
 Write-Host ""
 Write-Host "停止合并：logs\continuous-xhs-ingest.STOP；停止数分：logs\continuous-xhs-analytics.STOP"
 Write-Host "调参：$mc\config\base_config.py （XHS_SESSION_LOOP_INTERVAL_SEC / XHS_SESSION_MAX_ROUNDS / CRAWLER_MAX_SLEEP_SEC）"
-Write-Host "一键三窗（推荐）：Set-Location '$repo'; .\scripts\start-xhs-full-pipeline.ps1"
+Write-Host "一键后台（默认仅合并+数分，稳定）：Set-Location '$repo'; .\scripts\start-xhs-pipeline-background.ps1"
+Write-Host "一键三窗（含爬虫）：.\scripts\start-xhs-full-pipeline.ps1 或 .\scripts\start-xhs-pipeline-background.ps1 -WithCrawler"
 Write-Host "=================================" -ForegroundColor Cyan
 Write-Host ""
 

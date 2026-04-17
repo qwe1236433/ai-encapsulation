@@ -1,32 +1,34 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  后台启动：合并 jsonl（MergeOnly）+ 持续数分 +（可选）MediaCrawler 监视爬虫。
+  后台启动：默认只跑「合并 jsonl + 持续数分」（稳定）；爬虫需显式 -WithCrawler。
 
 .DESCRIPTION
-  使用 Start-Process 各起一个独立 PowerShell 进程，默认窗口最小化到任务栏（非无窗口，便于出错时点开看）。
-  日志：合并 logs\continuous-xhs-ingest.log；数分 logs\continuous-xhs-analytics.log。
-  停止：任务栏里对应窗口 Ctrl+C，或写入 logs\continuous-xhs-ingest.STOP / continuous-xhs-analytics.STOP。
+  默认不启 MediaCrawler：爬虫进程一旦 exit=1，监视脚本若自动重启，浏览器会表现为「开了关、关了开」。
+  合并与数分不依赖浏览器，适合作为一键默认。
 
-  数分出现「SKIP: digest unchanged」属正常：digest 未变时每轮只休眠，等合并写出新 digest 后才会继续判断是否要跑完整数分。
+  需要爬虫时：加 -WithCrawler。默认传 -NoAutoRestart（子进程挂了就停）；要自动重启请加 -CrawlerAllowAutoRestart。
+
+  日志：logs\continuous-xhs-ingest.log；logs\continuous-xhs-analytics.log；爬虫见 logs\mediacrawler-watch.log。
+  停止：各窗口 Ctrl+C，或 logs\continuous-xhs-ingest.STOP / continuous-xhs-analytics.STOP。
 
 .PARAMETER WindowStyle
-  Minimized（默认）| Hidden（完全隐藏，仅看日志）| Normal。
+  Minimized（默认）| Hidden | Normal。
 
-.PARAMETER SkipCrawler
-  不启动 MediaCrawler+watch 进程。
+.PARAMETER WithCrawler
+  额外启动 run-mediacrawler-xhs-keywords-watch.ps1。
+
+.PARAMETER CrawlerAllowAutoRestart
+  与 -WithCrawler 合用：允许子进程退出后自动重启（默认不允许）。
 
 .PARAMETER AnalyticsEveryNDigests
   传给 continuous-xhs-analytics.ps1（默认 3）。
 
-.PARAMETER CrawlerNoAutoRestart
-  传给监视脚本：MediaCrawler 进程退出后不自动重启（便于排查闪退）。
-
 .PARAMETER CrawlerGiveUpAfterQuickExits
-  传给监视脚本：连续短进程退出达到此次数后停止自动重启（默认 8，避免网页反复关开）。设为 0 则不限次数。
+  仅当允许自动重启时有效：连续短退出达此次数后停止（默认 8）。0=不限制。
 
 .PARAMETER CrawlerNoRedirectChildLogs
-  传给监视脚本：不重定向 python 输出到 logs（仅当重定向导致扫码/浏览器异常时使用）。
+  爬虫子进程输出不重定向到 logs。
 
 .PARAMETER WhatIf
   只打印将启动的命令，不实际 Start-Process。
@@ -36,15 +38,15 @@
   .\scripts\start-xhs-pipeline-background.ps1
 
 .EXAMPLE
-  不启爬虫、隐藏窗口：
-  .\scripts\start-xhs-pipeline-background.ps1 -SkipCrawler -WindowStyle Hidden
+  三窗且允许崩溃后自动重启：
+  .\scripts\start-xhs-pipeline-background.ps1 -WithCrawler -CrawlerAllowAutoRestart
 #>
 [CmdletBinding()]
 param(
     [ValidateSet("Minimized", "Hidden", "Normal")]
     [string] $WindowStyle = "Minimized",
-    [switch] $SkipCrawler,
-    [switch] $CrawlerNoAutoRestart,
+    [switch] $WithCrawler,
+    [switch] $CrawlerAllowAutoRestart,
     [ValidateRange(0, 100)]
     [int] $CrawlerGiveUpAfterQuickExits = 8,
     [switch] $CrawlerNoRedirectChildLogs,
@@ -66,8 +68,8 @@ foreach ($p in @($mergeScript, $anaScript)) {
         exit 1
     }
 }
-if (-not $SkipCrawler -and -not (Test-Path -LiteralPath $crawlScript)) {
-    Write-Host "ERROR: missing $crawlScript (use -SkipCrawler)" -ForegroundColor Red
+if ($WithCrawler -and -not (Test-Path -LiteralPath $crawlScript)) {
+    Write-Host "ERROR: missing $crawlScript" -ForegroundColor Red
     exit 1
 }
 
@@ -77,52 +79,62 @@ $ws = switch ($WindowStyle) {
     default { [System.Diagnostics.ProcessWindowStyle]::Normal }
 }
 
-function Start-BgPowershell([string] $Title, [string[]] $ArgList) {
+function Start-BgPowershell([string] $Label, [string[]] $ArgList) {
     if ($WhatIf) {
-        Write-Host "WhatIf: Start-Process powershell -WindowStyle $WindowStyle -Args $($ArgList -join ' ')" -ForegroundColor DarkGray
+        Write-Host "WhatIf [$Label]: powershell.exe $($ArgList -join ' ')" -ForegroundColor DarkGray
         return
     }
-    Start-Process -FilePath "powershell.exe" -WorkingDirectory $repo -WindowStyle $ws -ArgumentList $ArgList | Out-Null
+    try {
+        Start-Process -FilePath "powershell.exe" -WorkingDirectory $repo -WindowStyle $ws -ArgumentList $ArgList | Out-Null
+    }
+    catch {
+        Write-Host "ERROR: Start-Process failed ($Label): $_" -ForegroundColor Red
+        throw
+    }
 }
 
-Write-Host "Starting background pipeline (repo=$repo, WindowStyle=$WindowStyle)..." -ForegroundColor Cyan
+Write-Host "Starting background pipeline (repo=$repo, WindowStyle=$WindowStyle, WithCrawler=$WithCrawler)..." -ForegroundColor Cyan
+if (-not $WithCrawler) {
+    Write-Host "提示: 默认不启 MediaCrawler —不会出现小红书扫码/浏览器窗口，只跑合并+数分。" -ForegroundColor DarkYellow
+    Write-Host "      需要登录/爬取请加: -WithCrawler；或另开终端: cd D:\MediaCrawler ; .\venv\Scripts\python.exe main.py --platform xhs --lt qrcode --type search" -ForegroundColor DarkYellow
+}
 
-# 窗 B：仅合并
+# 窗 B / C：用 -File 启动（避免 -Command 嵌套中文路径 + 无 BOM 脚本时被 PS5.1 误解析，导致某个窗口秒退）
 $mergeArgs = @(
     "-NoExit",
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
-    "-Command",
-    "& { try { `$Host.UI.RawUI.WindowTitle = 'XHS-BG MergeOnly' } catch { }; Set-Location -LiteralPath '$repo'; & '$mergeScript' -MergeOnly }"
+    "-File", $mergeScript,
+    "-MergeOnly"
 )
 Start-BgPowershell "merge" $mergeArgs
-Start-Sleep -Milliseconds 400
+Start-Sleep -Milliseconds 500
 
-# 窗 C：数分
 $anaArgs = @(
     "-NoExit",
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
-    "-Command",
-    "& { try { `$Host.UI.RawUI.WindowTitle = 'XHS-BG Analytics' } catch { }; Set-Location -LiteralPath '$repo'; & '$anaScript' -AnalyticsEveryNDigests $AnalyticsEveryNDigests }"
+    "-File", $anaScript,
+    "-AnalyticsEveryNDigests", "$AnalyticsEveryNDigests"
 )
 Start-BgPowershell "analytics" $anaArgs
 
-if (-not $SkipCrawler) {
-    Start-Sleep -Milliseconds 400
-    $crawlCmd = "& { try { `$Host.UI.RawUI.WindowTitle = 'XHS-BG CrawlerWatch' } catch { }; Set-Location -LiteralPath '$repo'; & '$crawlScript' -GiveUpAfterQuickExits $CrawlerGiveUpAfterQuickExits"
-    if ($CrawlerNoAutoRestart) { $crawlCmd += " -NoAutoRestart" }
-    if ($CrawlerNoRedirectChildLogs) { $crawlCmd += " -NoRedirectChildLogs" }
-    $crawlCmd += " }"
+if ($WithCrawler) {
+    Start-Sleep -Milliseconds 500
     $crawlArgs = @(
         "-NoExit",
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-Command",
-        $crawlCmd
+        "-File", $crawlScript,
+        "-GiveUpAfterQuickExits", "$CrawlerGiveUpAfterQuickExits"
     )
+    if (-not $CrawlerAllowAutoRestart) { $crawlArgs += "-NoAutoRestart" }
+    if ($CrawlerNoRedirectChildLogs) { $crawlArgs += "-NoRedirectChildLogs" }
     Start-BgPowershell "crawler" $crawlArgs
 }
 
-Write-Host "Done. Logs: logs\continuous-xhs-ingest.log , logs\continuous-xhs-analytics.log , logs\mediacrawler-watch.log , logs\mediacrawler-child.stderr.log" -ForegroundColor Green
+Write-Host "Done. Logs: logs\continuous-xhs-ingest.log , logs\continuous-xhs-analytics.log" -ForegroundColor Green
+if ($WithCrawler) {
+    Write-Host " Crawler: logs\mediacrawler-watch.log , logs\mediacrawler-child.stderr.log" -ForegroundColor Green
+}
 Write-Host "STOP files: logs\continuous-xhs-ingest.STOP , logs\continuous-xhs-analytics.STOP" -ForegroundColor DarkGray

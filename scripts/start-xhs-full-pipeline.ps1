@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   一键打开三窗：合并 Feed（B）→ 持续数分（C）→ MediaCrawler 小红书（A）。
@@ -63,19 +63,12 @@ if (-not $SkipCrawler -and -not (Test-Path -LiteralPath $pyMc)) {
     Write-Host "WARN: MediaCrawler Python not found: $pyMc (set MEDIACRAWLER_ROOT or install venv)" -ForegroundColor DarkYellow
 }
 
-function Invoke-PipelineWindow([string] $Title, [string] $Inner) {
-    $cmd = "& { try { `$Host.UI.RawUI.WindowTitle = '$Title' } catch { }; Set-Location -LiteralPath '$repo'; $Inner }"
+function Start-PipelineWindow([string] $Label, [string[]] $ArgList) {
     if ($WhatIf) {
-        Write-Host "WhatIf: powershell -NoExit -Command $cmd" -ForegroundColor DarkGray
+        Write-Host "WhatIf [$Label]: powershell.exe $($ArgList -join ' ')" -ForegroundColor DarkGray
         return
     }
-    Start-Process -FilePath "powershell.exe" -WorkingDirectory $repo -ArgumentList @(
-        "-NoExit",
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-Command",
-        $cmd
-    )
+    Start-Process -FilePath "powershell.exe" -WorkingDirectory $repo -ArgumentList $ArgList
 }
 
 Write-Host ""
@@ -83,18 +76,28 @@ Write-Host "Starting XHS pipeline (3 windows)..." -ForegroundColor Cyan
 Write-Host "  Repo: $repo"
 Write-Host ""
 
-Invoke-PipelineWindow "XHS-B Merge jsonl->Feed" "& '$mergeScript' -MergeOnly"
+Start-PipelineWindow "merge" @(
+    "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass",
+    "-File", $mergeScript, "-MergeOnly"
+)
 
 Start-Sleep -Milliseconds 600
 
-Invoke-PipelineWindow "XHS-C Analytics digest" "& '$anaScript'"
+Start-PipelineWindow "analytics" @(
+    "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass",
+    "-File", $anaScript
+)
 
 if (-not $SkipCrawler) {
     Start-Sleep -Milliseconds 600
-    $crawlInner = "& '$crawlScript' -GiveUpAfterQuickExits $CrawlerGiveUpAfterQuickExits"
-    if ($CrawlerNoAutoRestart) { $crawlInner += " -NoAutoRestart" }
-    if ($CrawlerNoRedirectChildLogs) { $crawlInner += " -NoRedirectChildLogs" }
-    Invoke-PipelineWindow "XHS-A MediaCrawler+watch" $crawlInner
+    $cArgs = @(
+        "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", $crawlScript,
+        "-GiveUpAfterQuickExits", "$CrawlerGiveUpAfterQuickExits"
+    )
+    if ($CrawlerNoAutoRestart) { $cArgs += "-NoAutoRestart" }
+    if ($CrawlerNoRedirectChildLogs) { $cArgs += "-NoRedirectChildLogs" }
+    Start-PipelineWindow "crawler" $cArgs
 }
 
 Write-Host "Done. Close windows or use STOP files under logs\ to stop loops." -ForegroundColor Green

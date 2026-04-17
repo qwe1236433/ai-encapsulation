@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   监视 keyword_candidates_for_cli.txt 与 MediaCrawler config/base_config.py、config/xhs_config.py；变更后结束爬虫并带新 --keywords 重启。

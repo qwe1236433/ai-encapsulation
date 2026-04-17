@@ -1,6 +1,6 @@
-#Requires -Version 5.1
-# 将 auto_baseline_v1.json（或指定 artifact）路径写入 research/runtime/factory_baseline.env
-# 供 api/main.py 第二次 load_dotenv 覆盖 XHS_FACTORY_BASELINE_JSON（仅覆盖该文件内声明的键）。
+﻿#Requires -Version 5.1
+# 将 auto_baseline_v1.json (或指定 artifact) 路径写入 research/runtime/factory_baseline.env
+# 供 api/main.py 第二次 load_dotenv 覆盖 XHS_FACTORY_BASELINE_JSON (仅覆盖该文件内声明的键).
 param(
     [Parameter(Mandatory = $true)]
     [string] $BaselineJsonPath,
@@ -15,7 +15,7 @@ New-Item -ItemType Directory -Force -Path $rt | Out-Null
 $out = Join-Path $rt "factory_baseline.env"
 $utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $lines = @(
-    "# AUTO-GENERATED — do not hand-edit if you rely on continuous-xhs-analytics sync",
+    "# AUTO-GENERATED - do not hand-edit if you rely on continuous-xhs-analytics sync",
     "# updated_utc=$utc",
     "XHS_FACTORY_BASELINE_JSON=$abs"
 )

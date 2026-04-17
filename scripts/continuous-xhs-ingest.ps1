@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   长期增量采集编排：周期性跑 MediaCrawler → 把 jsonl 目录全量合并进工厂 Feed（去重 + digest）。

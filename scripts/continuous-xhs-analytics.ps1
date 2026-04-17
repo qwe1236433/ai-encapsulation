@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   持续数分：监测 Feed digest 代数 → 每 N 次新 digest 跑一轮导出/校验/候选词/训练/评估，并落盘快照。

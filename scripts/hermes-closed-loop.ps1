@@ -119,7 +119,8 @@ while ($true) {
     try {
         $proc = Start-Process -FilePath "python" -ArgumentList $argv -WorkingDirectory $repo -PassThru -NoNewWindow -Wait `
             -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
-        $code = $proc.ExitCode
+        # 防御：PS 5.1 在 -NoNewWindow -Wait -PassThru -Redirect* 组合下偶尔 $proc 为 $null
+        if ($null -ne $proc) { $code = $proc.ExitCode } else { $code = 0 }
     }
     catch {
         Write-RunnerLog "ERROR: launching python failed: $_"
@@ -128,7 +129,9 @@ while ($true) {
 
     $summary = ""
     if (Test-Path -LiteralPath $stdoutFile) {
-        $summary = (Get-Content -LiteralPath $stdoutFile -Raw -Encoding UTF8 -ErrorAction SilentlyContinue).Trim()
+        # 防御：空 stdout 文件时 Get-Content -Raw 返回 $null，不能直接 .Trim()
+        $raw = Get-Content -LiteralPath $stdoutFile -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+        if ($raw) { $summary = $raw.Trim() }
     }
     if ($summary) {
         # 摘要通常是 tick 脚本 --quiet 下的一行 JSON

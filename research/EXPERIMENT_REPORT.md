@@ -397,4 +397,32 @@ python research\validate_formula_v2.py `
 - **null perm AUC** (single run, n_holdout=217): 0.4662
 
 
+### AUTO-EVAL 2026-04-18 08:50 UTC
+- **feed digest sha256**: `823bb332becb003a…`（全长 64 hex）
+- **eval**: `research/artifacts/eval_auto_baseline_v0.json`
+- **n_samples**: 926; **artifact holdout ROC-AUC**: 0.9999
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.211, title_len=-0.171, body_len=0.070
+- **null perm AUC** (single run, n_holdout=278): 0.5128
+- **eval**: `research/artifacts/eval_auto_baseline_v1.json`
+- **n_samples**: 926; **artifact holdout ROC-AUC**: 1.0000
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=5.754, log1p_collect=1.186, log1p_share=0.378, title_len=-0.195, age_days=0.076, log1p_comment=0.074, body_len=0.014
+- **null perm AUC** (single run, n_holdout=278): 0.5468
+
+
+### AUTO-EVAL 2026-04-18 09:44 UTC
+- **feed digest sha256**: `49ea3dc1f1ebde38…`（全长 64 hex）
+- **eval**: `research/artifacts/eval_auto_baseline_v0.json`
+- **n_samples**: 1113; **artifact holdout ROC-AUC**: 0.9999
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.163, title_len=-0.190, body_len=0.069
+- **null perm AUC** (single run, n_holdout=334): 0.5543
+- **eval**: `research/artifacts/eval_auto_baseline_v1.json`
+- **n_samples**: 1113; **artifact holdout ROC-AUC**: 1.0000
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=5.753, log1p_collect=1.167, log1p_share=0.371, title_len=-0.212, age_days=0.069, log1p_comment=0.066, body_len=0.016
+- **null perm AUC** (single run, n_holdout=334): 0.5108
+
+
 <!-- AUTO_EVAL_TAIL -->

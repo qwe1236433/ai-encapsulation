@@ -229,6 +229,11 @@ def main() -> int:
         action="store_true",
         help="不写 research/runtime/features_export_provenance.json（默认可审计数据范围）",
     )
+    ap.add_argument(
+        "--with-sample-fingerprint",
+        action="store_true",
+        help="写出列 sample_fp：sha256(标题\\n正文\\nlike_proxy)，供流式/增量逻辑回归去重样本",
+    )
     args = ap.parse_args()
     if args.verify_samples_digest and not (args.feed_digest or "").strip():
         print("错误：--verify-samples-digest 必须同时提供 --feed-digest", flush=True)

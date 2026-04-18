@@ -1,5 +1,5 @@
 """
-Hermes 的"启动爬虫"能力。
+Hermes 爬虫调参环 - "启动爬虫" 能力（已从 hermes/ 迁出到 research/hermes_loop/）。
 
 两种模式（由环境变量 HERMES_CRAWLER_CMD 决定）：
   1. 真模式（已配）：subprocess 调用外部爬虫命令，关键词通过 HERMES_CRAWLER_KEYWORDS 环境变量传入
@@ -10,6 +10,9 @@ Hermes 的"启动爬虫"能力。
   - 不编造"爬虫已经接好"的假象 —— 降级模式输出的是审计意图，不是"已执行"
   - 不阻塞调用方 —— 真模式下 subprocess 不等完成，只确认它起得来
   - 可追溯 —— 无论真降，都写 crawler_requests.jsonl
+
+备注：实际闭环用的是 scripts/hermes_closed_loop_tick.py 通过"写 CLI 文件触发窗 A 重启"的方式，
+     不会走这里的 subprocess 路径。本模块主要保留给"直接控制爬虫进程"的场景和 API 端点。
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CRAWLER_REQUEST_LOG = REPO_ROOT / "research" / "artifacts" / "crawler_requests.jsonl"
 
 ENV_CMD = "HERMES_CRAWLER_CMD"

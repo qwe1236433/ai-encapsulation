@@ -1,6 +1,8 @@
 """
 审核员（Auditor）—— 守门人，对 Hermes 提出的"微调提案"做严格审核。
 
+（已从 hermes/ 迁出到 research/hermes_loop/，见本目录 README.md 的边界说明。）
+
 双层结构：
   1. 硬门禁（纯 Python 数学/逻辑，无 LLM）：任一不过 → fail。
      α 统计显著性：新规则触发组的系数 p < 0.05 且 95% CI 不跨 0
@@ -36,10 +38,10 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-_HERMES_DIR = Path(__file__).resolve().parent
-if str(_HERMES_DIR) not in sys.path:
-    sys.path.insert(0, str(_HERMES_DIR))
-from _minimax import call_minimax  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from hermes._minimax import call_minimax  # noqa: E402
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
@@ -50,7 +52,6 @@ from sklearn.model_selection import StratifiedKFold  # noqa: E402
 
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FEATURES_CSV = REPO_ROOT / "research" / "features_v2.csv"
 DEFAULT_BASELINE_JSON = REPO_ROOT / "research" / "artifacts" / "baseline_v2.json"
 

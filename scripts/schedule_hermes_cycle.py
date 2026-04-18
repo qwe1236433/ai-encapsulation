@@ -10,10 +10,13 @@
       python scripts/schedule_hermes_cycle.py --reason manual --force-kind threshold
 
 两种工作模式（互斥，优先级：--via-api > 直连）：
-  1. 直连（默认）：直接 import hermes.cycle.trigger_cycle 本地运行。
+  1. 直连（默认）：直接 import research.hermes_loop.cycle.trigger_cycle 本地运行。
      适合 Hermes 还没起 API 服务 / 爬虫在同一机器上。
   2. --via-api：POST 到 /api/hermes/cycle。
      适合 Hermes 服务已起、爬虫在另一台机器、或想走 API 审计日志。
+
+注：爬虫调参环已从 hermes/ 迁出到 research/hermes_loop/，与 hermes/ 主 TAVC（FastAPI
+    内容生成服务）物理分家。见 research/hermes_loop/README.md。
 """
 
 from __future__ import annotations
@@ -75,7 +78,7 @@ def _print_human(report: dict) -> None:
 
 def _call_direct(args: argparse.Namespace) -> dict:
     sys.path.insert(0, str(REPO_ROOT))
-    from hermes.cycle import trigger_cycle
+    from research.hermes_loop.cycle import trigger_cycle
 
     report = trigger_cycle(
         reason=args.reason,

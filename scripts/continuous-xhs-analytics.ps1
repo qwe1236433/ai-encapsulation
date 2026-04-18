@@ -262,6 +262,8 @@ $artDir = Join-Path $RepoRoot "research\artifacts"
 New-Item -ItemType Directory -Force -Path $artDir | Out-Null
 $outV0 = Join-Path $artDir "auto_baseline_v0.json"
 $outV1 = Join-Path $artDir "auto_baseline_v1.json"
+$outV2 = Join-Path $artDir "baseline_v2.json"
+$featuresV2 = Join-Path $RepoRoot "research\features_v2.csv"
 
 $forceNext = $Force
 $N = [int]$AnalyticsEveryNDigests
@@ -345,6 +347,7 @@ while ($true) {
     $suggestOk = $false
     $trainV0Ok = $false
     $trainV1Ok = $false
+    $trainV2Ok = $false
     $evalV0Ok = $false
     $evalV1Ok = $false
     $dataRows = 0
@@ -434,6 +437,28 @@ while ($true) {
             Write-AnalyticLog "ERROR: train v1 exit=$LASTEXITCODE"
         }
         else { $trainV1Ok = $true }
+
+        # v2（纯文本特征，Hermes 闭环消费）：features_v0.csv 已是 v2 超集，复制一份再训
+        try {
+            Copy-Item -LiteralPath $FeaturesOut -Destination $featuresV2 -Force
+            Write-AnalyticLog "  copied features -> $featuresV2"
+        }
+        catch {
+            Write-AnalyticLog "WARN: copy features_v2 failed: $_"
+        }
+        Write-AnalyticLog "  train v2 -> $outV2 (pure-text schema, Hermes consumer)"
+        $v2Common = @(
+            $trainPy,
+            "--features", $featuresV2,
+            "--labels-spec", $LabelsSpec,
+            "--cv-folds", "$CvFolds"
+        )
+        if ($AllowMixedBatch) { $v2Common += "--allow-mixed-batch" }
+        & python @($v2Common + @("--out", $outV2, "--feature-schema", "v2"))
+        if ($LASTEXITCODE -ne 0) {
+            Write-AnalyticLog "ERROR: train v2 exit=$LASTEXITCODE"
+        }
+        else { $trainV2Ok = $true }
     }
 
     if (-not $SkipWeightEvaluation) {

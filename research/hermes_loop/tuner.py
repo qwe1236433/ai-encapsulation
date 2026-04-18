@@ -1,6 +1,8 @@
 """
 Hermes Tuner —— 根据数分中心的打分/统计结果，调 MiniMax 提出"微调提案"。
 
+（已从 hermes/ 迁出到 research/hermes_loop/，见本目录 README.md 的边界说明。）
+
 流程：
   collect_analytics_snapshot()  从 features_v2.csv + baseline_v2.json + 当前规则 → 简洁快照
         ↓
@@ -29,12 +31,12 @@ from typing import Any, Literal
 
 import pandas as pd
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT / "hermes") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "hermes"))
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from _minimax import call_minimax  # noqa: E402
-from auditor import (  # noqa: E402
+from hermes._minimax import call_minimax  # noqa: E402
+from research.hermes_loop.auditor import (  # noqa: E402
     DEFAULT_BASELINE_JSON,
     DEFAULT_FEATURES_CSV,
     TuningProposal,

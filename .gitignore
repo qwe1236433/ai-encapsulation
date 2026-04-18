@@ -43,6 +43,14 @@ outputs/.runtime-goals/
 logs/merge-xhs-feed.log
 logs/analytics-digest-generation.json
 
+# Hermes 闭环（窗 D）运行时日志与状态 —— 本地产物，勿提交
+logs/hermes-closed-loop.log
+logs/hermes-closed-loop-state.json
+logs/hermes-closed-loop-runner.log
+logs/hermes-closed-loop-runner.last.stdout
+logs/hermes-closed-loop-runner.last.stderr
+logs/hermes-closed-loop.STOP
+
 # 本地 smoke / 同步脚本生成的任务快照
 *-last-task.json
 last-task-sync.json

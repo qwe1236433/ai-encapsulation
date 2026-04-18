@@ -656,7 +656,7 @@ def api_hermes_cycle(body: HermesCycleBody) -> dict[str, Any]:
     if body.force_kind not in (None, "threshold", "keyword_pool", "prompt"):
         raise HTTPException(status_code=400, detail="force_kind 只能是 threshold / keyword_pool / prompt 或留空")
     try:
-        from hermes.cycle import trigger_cycle
+        from research.hermes_loop.cycle import trigger_cycle
     except ImportError as e:
         raise HTTPException(status_code=500, detail=f"Hermes cycle 模块加载失败: {e}") from e
 
@@ -676,7 +676,7 @@ def api_hermes_cycle(body: HermesCycleBody) -> dict[str, Any]:
 @app.get("/api/hermes/artifacts")
 def api_hermes_artifacts(limit: int = Query(default=20, ge=1, le=200)) -> dict[str, Any]:
     """列出 Hermes 工作循环的留痕文件最近 N 条，方便前端/运维审计。"""
-    from hermes.cycle import (
+    from research.hermes_loop.cycle import (
         APPROVED_PROMPTS_JSONL,
         APPROVED_TUNINGS_JSONL,
         CYCLE_LOG_JSONL,

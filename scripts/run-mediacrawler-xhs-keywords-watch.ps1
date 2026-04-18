@@ -53,7 +53,11 @@ param(
     [int] $MaxRestartDelaySeconds = 180,
     [ValidateRange(0, 100)]
     [int] $GiveUpAfterQuickExits = 0,
-    [switch] $NoRedirectChildLogs
+    [switch] $NoRedirectChildLogs,
+    [ValidateRange(0, 1440)]
+    [int] $KeywordChangeMinGapMinutes = 60,
+    [ValidateRange(0, 60)]
+    [int] $GracefulStopSeconds = 5
 )
 
 $ErrorActionPreference = "Stop"
@@ -116,11 +120,48 @@ function Read-KeywordsLine([string] $Path) {
     return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8).Trim()
 }
 
-function Stop-CrawlerTree([System.Diagnostics.Process] $Proc) {
+function Stop-StaleMcChrome {
+    <#
+      只杀 MediaCrawler CDP 启动的 chrome.exe（命令行里含 browser_data\cdp_*_user_data_dir），
+      不会误伤你日常 Chrome。用于启动/重启前清理残留窗口，避免出现"两个 Chrome 窗口、
+      老窗口还亮着旧横幅"的情况。
+    #>
+    try {
+        $procs = Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" -ErrorAction SilentlyContinue
+    } catch { return }
+    if (-not $procs) { return }
+    $killed = 0
+    foreach ($p in $procs) {
+        $cmd = $p.CommandLine
+        if (-not $cmd) { continue }
+        if ($cmd -match 'browser_data\\cdp_[^\\]*_user_data_dir') {
+            try {
+                & taskkill.exe /PID $p.ProcessId /T /F 2>$null | Out-Null
+                $killed++
+            } catch { }
+        }
+    }
+    if ($killed -gt 0) {
+        Write-WatchLog ("Cleaned {0} stale MediaCrawler-CDP chrome.exe process(es) before launch." -f $killed)
+        Start-Sleep -Milliseconds 800
+    }
+}
+
+function Stop-CrawlerTree([System.Diagnostics.Process] $Proc, [int] $GracefulSec = 5) {
     if ($null -eq $Proc) { return }
     try {
+        if ($Proc.HasExited) { return }
+        & taskkill.exe /PID $Proc.Id /T 2>$null | Out-Null
+        $deadline = (Get-Date).AddSeconds([Math]::Max(1, $GracefulSec))
+        while ((Get-Date) -lt $deadline) {
+            if ($Proc.HasExited) { return }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    catch { }
+    try {
         if (-not $Proc.HasExited) {
-            & taskkill.exe /PID $Proc.Id /T /F 2>$null
+            & taskkill.exe /PID $Proc.Id /T /F 2>$null | Out-Null
         }
     }
     catch { }
@@ -131,6 +172,9 @@ function Stop-CrawlerTree([System.Diagnostics.Process] $Proc) {
 }
 
 function Start-CrawlerProcess([string] $KwLine) {
+    # 启动前先清理上一次遗留的 MC-CDP Chrome 进程，避免出现双窗口 / 老横幅仍在屏上的情况。
+    # 识别依据：chrome.exe 命令行包含 browser_data\cdp_*_user_data_dir（MC 特有），不会影响日常 Chrome。
+    Stop-StaleMcChrome
     $argv = @(
         "main.py",
         "--platform", "xhs",
@@ -140,9 +184,11 @@ function Start-CrawlerProcess([string] $KwLine) {
     if ($KwLine) {
         $argv += @("--keywords", $KwLine)
         Write-Host "Starting MediaCrawler with --keywords (len=$($KwLine.Length))" -ForegroundColor Cyan
+        Write-WatchLog ("Starting MediaCrawler with --keywords (len={0})" -f $KwLine.Length)
     }
     else {
         Write-Host "Starting MediaCrawler without --keywords (base_config)" -ForegroundColor DarkYellow
+        Write-WatchLog "Starting MediaCrawler without --keywords (base_config)"
     }
     if (-not $NoRedirectChildLogs) {
         $ld = Join-Path $repo "logs"
@@ -181,6 +227,8 @@ $pendingSig = $null
 $child = $null
 $consecutiveQuickExits = 0
 $quickExitThresholdSec = 45
+$lastKeywordSwitchUtc = $null
+$cooldownNotifiedForSig = $null
 
 function Get-RestartDelaySeconds {
     if ($consecutiveQuickExits -le 0) { return $MinRestartDelaySeconds }
@@ -263,12 +311,30 @@ try {
         }
 
         $pfx = if ($sig2.Length -ge 16) { $sig2.Substring(0, 16) } else { $sig2 }
+
+        if ($KeywordChangeMinGapMinutes -gt 0 -and $null -ne $lastKeywordSwitchUtc) {
+            $sinceLast = ([DateTime]::UtcNow - $lastKeywordSwitchUtc).TotalMinutes
+            if ($sinceLast -lt $KeywordChangeMinGapMinutes) {
+                if ($cooldownNotifiedForSig -ne $sig2) {
+                    $remain = [Math]::Ceiling($KeywordChangeMinGapMinutes - $sinceLast)
+                    Write-WatchLog ("Keywords changed (sig prefix {0}...) but cooldown active: last switch {1:N1} min ago < {2} min gap. Skipping restart; will re-apply when eligible. (account-safety)" -f $pfx, $sinceLast, $KeywordChangeMinGapMinutes)
+                    $cooldownNotifiedForSig = $sig2
+                }
+                $pendingSince = $null
+                $pendingSig = $null
+                continue
+            }
+        }
+
         Write-Host "Keywords or MediaCrawler config changed (sig prefix $pfx...). Restarting crawler..." -ForegroundColor Cyan
-        Stop-CrawlerTree $child
+        Write-WatchLog ("Keywords or MediaCrawler config changed (sig prefix {0}...). Restarting crawler." -f $pfx)
+        Stop-CrawlerTree $child $GracefulStopSeconds
         $child = $null
         Start-Sleep -Seconds 2
 
         $stableSig = $sig2
+        $lastKeywordSwitchUtc = [DateTime]::UtcNow
+        $cooldownNotifiedForSig = $null
         $pendingSince = $null
         $pendingSig = $null
         $line = Read-KeywordsLine $KeywordsFile
@@ -277,5 +343,5 @@ try {
     }
 }
 finally {
-    Stop-CrawlerTree $child
+    Stop-CrawlerTree $child $GracefulStopSeconds
 }

@@ -628,6 +628,88 @@ def api_diagnose_note(body: DiagnoseNoteBody) -> dict[str, Any]:
     }
 
 
+class HermesCycleBody(BaseModel):
+    reason: str = Field(default="api_manual", description="本次触发的来源，审计留痕用")
+    force_kind: str | None = Field(
+        default=None,
+        description="强制 tuner 只提某类提案：threshold | keyword_pool | prompt；不填则自由发挥",
+    )
+    max_rounds: int = Field(default=3, ge=1, le=5, description="tuner→auditor 的重试轮数上限")
+    trigger_crawl_on_keyword_approval: bool = Field(
+        default=False,
+        description="审核通过 keyword_pool 提案后，是否立即申请启动爬虫（HERMES_CRAWLER_CMD 未设则降级为写 intent）",
+    )
+
+
+@app.post("/api/hermes/cycle")
+def api_hermes_cycle(body: HermesCycleBody) -> dict[str, Any]:
+    """
+    主动激活 Hermes 一次完整工作循环：snapshot → tuner → auditor → 落盘生效。
+
+    典型调用者：
+      - 爬虫跑完一批数据后，POST 过来让 Hermes 复盘
+      - 定时任务（cron / Windows 任务计划）按小时/天周期调用
+      - 人在终端手动触发（对应 reason="manual"）
+
+    返回的 CycleReport 里包含：是否有提案通过、触发了哪些副作用、留痕路径。
+    """
+    if body.force_kind not in (None, "threshold", "keyword_pool", "prompt"):
+        raise HTTPException(status_code=400, detail="force_kind 只能是 threshold / keyword_pool / prompt 或留空")
+    try:
+        from hermes.cycle import trigger_cycle
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Hermes cycle 模块加载失败: {e}") from e
+
+    try:
+        report = trigger_cycle(
+            reason=body.reason,
+            force_kind=body.force_kind,
+            max_rounds=body.max_rounds,
+            trigger_crawl_on_keyword_approval=body.trigger_crawl_on_keyword_approval,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=f"数分中心数据缺失（需先跑基线）: {e}") from e
+
+    return report.to_dict()
+
+
+@app.get("/api/hermes/artifacts")
+def api_hermes_artifacts(limit: int = Query(default=20, ge=1, le=200)) -> dict[str, Any]:
+    """列出 Hermes 工作循环的留痕文件最近 N 条，方便前端/运维审计。"""
+    from hermes.cycle import (
+        APPROVED_PROMPTS_JSONL,
+        APPROVED_TUNINGS_JSONL,
+        CYCLE_LOG_JSONL,
+        KEYWORD_POOL_ACTIVE_JSON,
+        REJECTED_TUNINGS_JSONL,
+    )
+
+    def _tail_jsonl(path: Path, n: int) -> list[dict[str, Any]]:
+        if not path.is_file():
+            return []
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()[-n:]
+            return [json.loads(x) for x in lines if x.strip()]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _read_json(path: Path) -> dict[str, Any] | None:
+        if not path.is_file():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
+
+    return {
+        "active_keyword_pool": _read_json(KEYWORD_POOL_ACTIVE_JSON),
+        "recent_approved_tunings": _tail_jsonl(APPROVED_TUNINGS_JSONL, limit),
+        "recent_approved_prompts": _tail_jsonl(APPROVED_PROMPTS_JSONL, limit),
+        "recent_rejected": _tail_jsonl(REJECTED_TUNINGS_JSONL, limit),
+        "recent_cycles": _tail_jsonl(CYCLE_LOG_JSONL, limit),
+    }
+
+
 @app.get("/api/runs/latest")
 def api_runs_latest() -> dict[str, Any]:
     if not OUTPUT_RUNS.is_dir():

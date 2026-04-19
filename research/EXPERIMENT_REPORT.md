@@ -495,4 +495,18 @@ python research\validate_formula_v2.py `
 - **null perm AUC** (single run, n_holdout=439): 0.5642
 
 
+### AUTO-EVAL 2026-04-19 03:27 UTC
+- **feed digest sha256**: `83eefaa1d665e8f3…`（全长 64 hex）
+- **eval**: `research/artifacts/eval_auto_baseline_v0.json`
+- **n_samples**: 1482; **artifact holdout ROC-AUC**: 1.0000
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.461, title_len=-0.159, body_len=0.044
+- **null perm AUC** (single run, n_holdout=445): 0.5893
+- **eval**: `research/artifacts/eval_auto_baseline_v1.json`
+- **n_samples**: 1482; **artifact holdout ROC-AUC**: 0.9998
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.128, log1p_collect=1.209, log1p_share=0.177, title_len=-0.167, log1p_comment=0.033, body_len=0.011, age_days=0.011
+- **null perm AUC** (single run, n_holdout=445): 0.5797
+
+
 <!-- AUTO_EVAL_TAIL -->

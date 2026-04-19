@@ -551,4 +551,88 @@ python research\validate_formula_v2.py `
 - **null perm AUC** (single run, n_holdout=516): 0.5584
 
 
+### AUTO-EVAL 2026-04-19 07:04 UTC
+- **feed digest sha256**: `358b50eeec1f417c…`（全长 64 hex）
+- **eval**: `research/artifacts/eval_auto_baseline_v0.json`
+- **n_samples**: 1849; **artifact holdout ROC-AUC**: 1.0000
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.363, title_len=-0.165, body_len=0.042
+- **null perm AUC** (single run, n_holdout=555): 0.5392
+- **eval**: `research/artifacts/eval_auto_baseline_v1.json`
+- **n_samples**: 1849; **artifact holdout ROC-AUC**: 0.9997
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.056, log1p_collect=1.155, title_len=-0.174, log1p_share=0.163, log1p_comment=0.023, age_days=0.015, body_len=0.014
+- **null perm AUC** (single run, n_holdout=555): 0.5078
+
+
+### AUTO-EVAL 2026-04-19 07:58 UTC
+- **feed digest sha256**: `a12cd6c987ad5581…`（全长 64 hex）
+- **eval**: `research/artifacts/eval_auto_baseline_v0.json`
+- **n_samples**: 1967; **artifact holdout ROC-AUC**: 1.0000
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.547, title_len=-0.092, body_len=0.065
+- **null perm AUC** (single run, n_holdout=591): 0.5003
+- **eval**: `research/artifacts/eval_auto_baseline_v1.json`
+- **n_samples**: 1967; **artifact holdout ROC-AUC**: 0.9999
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.136, log1p_collect=1.226, log1p_share=0.249, title_len=-0.115, log1p_comment=0.053, age_days=0.017, body_len=0.013
+- **null perm AUC** (single run, n_holdout=591): 0.4826
+
+
+### AUTO-EVAL 2026-04-19 08:53 UTC
+- **feed digest sha256**: `bf85fa8e1dab193e…`（全长 64 hex）
+- **eval**: `research/artifacts/eval_auto_baseline_v0.json`
+- **n_samples**: 2146; **artifact holdout ROC-AUC**: 1.0000
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.522, title_len=-0.101, body_len=0.065
+- **null perm AUC** (single run, n_holdout=644): 0.4625
+- **eval**: `research/artifacts/eval_auto_baseline_v1.json`
+- **n_samples**: 2146; **artifact holdout ROC-AUC**: 0.9996
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.142, log1p_collect=1.222, log1p_share=0.250, title_len=-0.117, log1p_comment=0.048, body_len=0.013, age_days=0.011
+- **null perm AUC** (single run, n_holdout=644): 0.5051
+
+
+### AUTO-EVAL 2026-04-19 09:47 UTC
+- **feed digest sha256**: `b56dde922b6d14b2…`（全长 64 hex）
+- **eval**: `research/artifacts/eval_auto_baseline_v0.json`
+- **n_samples**: 2255; **artifact holdout ROC-AUC**: 1.0000
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.567, title_len=-0.092, body_len=0.075
+- **null perm AUC** (single run, n_holdout=677): 0.4995
+- **eval**: `research/artifacts/eval_auto_baseline_v1.json`
+- **n_samples**: 2255; **artifact holdout ROC-AUC**: 0.9998
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.171, log1p_collect=1.223, log1p_share=0.249, title_len=-0.118, log1p_comment=0.067, age_days=0.018, body_len=0.017
+- **null perm AUC** (single run, n_holdout=677): 0.4900
+
+
+### AUTO-EVAL 2026-04-19 10:41 UTC
+- **feed digest sha256**: `01adcb6a263e6b33…`（全长 64 hex）
+- **eval**: `research/artifacts/eval_auto_baseline_v0.json`
+- **n_samples**: 2415; **artifact holdout ROC-AUC**: 1.0000
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.958, title_len=-0.067, body_len=0.037
+- **null perm AUC** (single run, n_holdout=725): 0.5887
+- **eval**: `research/artifacts/eval_auto_baseline_v1.json`
+- **n_samples**: 2415; **artifact holdout ROC-AUC**: 0.9998
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.472, log1p_collect=1.398, log1p_share=0.246, title_len=-0.110, log1p_comment=0.098, body_len=-0.010, age_days=0.008
+- **null perm AUC** (single run, n_holdout=725): 0.6040
+
+
+### AUTO-EVAL 2026-04-19 11:35 UTC
+- **feed digest sha256**: `f779512712b49e94…`（全长 64 hex）
+- **eval**: `research/artifacts/eval_auto_baseline_v0.json`
+- **n_samples**: 2606; **artifact holdout ROC-AUC**: 1.0000
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=7.051, title_len=-0.066, body_len=0.037
+- **null perm AUC** (single run, n_holdout=782): 0.4492
+- **eval**: `research/artifacts/eval_auto_baseline_v1.json`
+- **n_samples**: 2606; **artifact holdout ROC-AUC**: 0.9998
+- **warnings**: `holdout_auc_very_high_check_overfit`
+- **std coef (top by |coef|)**: log1p_like=6.580, log1p_collect=1.369, log1p_share=0.232, title_len=-0.101, log1p_comment=0.032, body_len=-0.024, age_days=-0.009
+- **null perm AUC** (single run, n_holdout=782): 0.4547
+
+
 <!-- AUTO_EVAL_TAIL -->
